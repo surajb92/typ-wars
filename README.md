@@ -3,3 +3,5 @@
 2. Set up local network discovery.
 3. Set up local network chat.
 4. Proceed with typing game.
+
+[Current Outline.](OUTLINE.md)
