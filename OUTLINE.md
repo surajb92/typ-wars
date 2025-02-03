@@ -57,7 +57,7 @@ Useful
 ======
 TCP dump :
 sudo tcpdump -i wlan0 -s0 -vv net 224.0.0.0/4
-sudo tcpdump -i eth0 -n udp
+sudo tcpdump -i wlan0 -n udp
 all UDP packets
 
 !! Python code to get public IP !!
