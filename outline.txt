@@ -35,4 +35,3 @@ then type something
 Socat loopback broadcast on same system. Doesn't seem to work with 255, but can test on another system.
 Send : socat - udp-sendto:127.255.255.255:3000,broadcast
 Receive : socat -u udp-recv:3000,reuseaddr -
-
