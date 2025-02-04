@@ -4,4 +4,4 @@
 3. Set up local network chat.
 4. Proceed with typing game.
 
-[Current Outline.](OUTLINE.md)
+[Current Outline.](outline.txt)
