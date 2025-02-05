@@ -3,11 +3,12 @@ OUTLINE | WIP Notes
 
 To do:
 1. Go to new window
-    a. Load for 3 seconds "Checking servers" (put "loading, 3,2,1 if you want"). [LATER]
-        i. Popup message
-        ii. 3 second wait while it searches server
-        iii. Set this system to client if no other server
-        iv. Move to server selection frame if there is already a server in the network
+    a. Message box urging player to wait 2 seconds [DONE]
+        i. Popup message [DONE]
+        ii. 2 second wait while it searches server [DONE/UT]
+        iii. Set this system to client if no other server [DONE/UT]
+        iv. Move to server selection frame if there is already a server in the network [DONE/UT]
+        v. If username already exists, popup and return, clear username field
 2. Figure out how networking works = Result : Too complicated to do over internet (NAT Tunneling etc.). Try with just over local network for now.
     a. Socket programming : Simple client - server connection with localhost [DONE]
     b. Send multicast to local network with server's IP. [DONE]
@@ -16,6 +17,10 @@ To do:
 NEXT STEPS
 ==========
 Set up server detection on main app.
+    Popup pages, duplicate detection, coding mostly complete.
+    Current hiccup : Async peer listener setup seems to be blocking execution of everything else.
+    Need to split duplicate user check into own function, and leave peer listener as is, without blocking anything else.
+    ^ Needs FIX
 
 Useful
 ======
