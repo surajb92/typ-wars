@@ -52,6 +52,7 @@ def center_window(window):
     window.geometry(f"{width}x{height}+{x}+{y}")
     #window.geometry(f"+{x}+{y}")
 
+""" Frame disable enable : Not required as of now, but keeping in case needed in the future.
 def disable_frame(parent):
     for child in parent.winfo_children():
         wtype = child.winfo_class()
@@ -67,6 +68,7 @@ def enable_frame(parent):
             child.configure(state='normal')
         else:
             enableChildren(child)
+"""
 
 async def check_duplicate_peer(u):
     notdupe=True
