@@ -3,11 +3,17 @@ from tkinter import messagebox
 from tkinter import ttk
 import asyncio
 import socket
+import threading
+import select
 
 # Main window definition, title and dimensions
 root = tk.Tk()
 root.title("Typ Wars")
 #root.geometry("720x480") # Setting static dimensions affects dynamic resize, so leave it as is
+
+#def quit_program():
+#    root.destroy()
+#root.protocol('WM_DELETE_WINDOW', quit_program)
 
 # Function to get local IP
 def get_ip():
@@ -33,12 +39,17 @@ PEER_LISTEN_PORT=3003
 PORT=3000
 TTL=2
 server_cache = {}
+# try:
+#    listener_socket=socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+# except (socket.error,e):
+#    print("Error creating socket: ",e)
+#    sys.exit(1)
+# listener_socket.settimeout(0.2)
 
 # Status variables
 logging_in = False
 logged_in = False
 in_game = False
-
 
 # Center the window
 def center_window(window):
@@ -91,35 +102,51 @@ async def check_duplicate_peer(u):
                 break
     return notdupe
 
-async def peer_listener():
+def peer_listener():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as l:
         l.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # Disable after local testing
         mreq = socket.inet_aton(MCAST_GROUP) + socket.inet_aton(MY_IP)
         l.setsockopt(socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+        l.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
         l.bind(('',PEER_LISTEN_PORT))
         while True:
-            await(data, addr = l.recvfrom(1024))
-            if logged_in:
-                d=data.decode()
-                if (d.startswith(MAGIC) and d not in server_cache and d != username.get()):
+            data, addr = l.recvfrom(1024)
+            d=data.decode()
+            peer_shout()
+            print("did it work")
+            if d.startswith(MAGIC) and d not in server_cache:
+                if d != username.get():
                     server_cache.append(d,addr[0])
-            else:
-                break
+                elif logged_in:
+                    peer_shout() # Tell the other guy who's boss
+                    # ^ Watch for this causing lag later on, might need to thread it if it causes problems
+                    continue
+                elif logging_in:
+                    server_cache.append(d,addr[0])
+        print("loop dead")
+listener_thread = threading.Thread(target=peer_listener)
+listener_thread.daemon=True # Not recommended for anything other than socket operations
 
-async def peer_shout():
+def peer_shout():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # Disable after local testing
         s.setsockopt(socket.SOL_IP, socket.IP_MULTICAST_TTL, TTL)
         for i in range(0, 200):
             s.sendto(username.get().encode(), (MCAST_GROUP,PEER_LISTEN_PORT))
+#shout_thread = threading.Thread(peer_shout,None)
 
 # Server login function (will need to expand later)
 def login():
     logging_in=True
     
     # Shout your presence on network
-    asyncio.run(peer_shout())
-    asyncio.run(peer_listener())
+    # error cant be run
+    #asyncio.run(peer_shout())
+    #asyncio.run(peer_listener())
+    #async with asyncio.TaskGroup() as tg:
+    #    tg.create_task(peer_shout())
+    #    tg.peer_listener(peer_listener())
+    listener_thread.start()
     
     # [LATER] If there are already servers in cache, show them while searching maybe?
     
@@ -144,7 +171,7 @@ def login():
     
     # Check for other hosts & whether your username is already taken
     # dupe = asyncio.run(check_duplicate_peer(username.get()))
-    
+    dupe = False
     # Root will not update and wait here until search_w has been destroyed
     root.wait_window(search_w)
 
@@ -274,8 +301,13 @@ server_list.pack(padx=10, pady=10, side=tk.TOP, fill='x')
 join_b.pack(padx=20, pady=20, side=tk.LEFT, anchor='nw')
 logout_b.pack(padx=20, pady=20, side=tk.RIGHT, anchor='nw')
 
-# Display login page
-login_page.pack(fill='both',expand=1)
-
 # Main window loop
-root.mainloop()
+def main():
+    # Display login page
+    login_page.pack(fill='both',expand=1)
+    root.mainloop()
+
+# Script import protection
+if __name__ == '__main__':
+    # asyncio.run(main())
+    main()
