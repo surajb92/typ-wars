@@ -11,46 +11,26 @@ root = tk.Tk()
 root.title("Typ Wars")
 #root.geometry("720x480") # Setting static dimensions affects dynamic resize, so leave it as is
 
-#def quit_program():
-#    root.destroy()
-#root.protocol('WM_DELETE_WINDOW', quit_program)
+# ----------------------------------------------
+#                   NETWORKING 
+# ----------------------------------------------
 
 # Function to get local IP
 def get_ip():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as ipsock:
         ipsock.connect(("8.8.8.8",1))
         return ipsock.getsockname()[0]
-
-# GUI variables
-login_page = ttk.Frame(root)
-server_page = ttk.Frame(root)
-server_list_page = ttk.Frame(root)
-
-# Message app variables
-isServer = False
-username=tk.StringVar()
-messages=tk.StringVar()
-
-# Network variables
 MY_IP = get_ip()
 MCAST_GROUP = "224.1.1.251"
 MAGIC = "!@#typ_wars#@!"
 PEER_LISTEN_PORT=3003
 PORT=3000
 TTL=2
-server_cache = {}
-# try:
-#    listener_socket=socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-# except (socket.error,e):
-#    print("Error creating socket: ",e)
-#    sys.exit(1)
-# listener_socket.settimeout(0.2)
 
-# Status variables
-logging_in = False
-logged_in = False
-in_game = False
-
+# ----------------------------------------------
+#                   FUNCTIONS 
+# ----------------------------------------------
+        
 # Center the window
 def center_window(window):
     width = window.winfo_reqwidth()
@@ -81,72 +61,104 @@ def enable_frame(parent):
             enableChildren(child)
 """
 
-async def check_duplicate_peer(u):
-    notdupe=True
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as p:
-        p.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # Disable after local testing
-        mreq = socket.inet_aton(MCAST_GROUP) + socket.inet_aton(MY_IP)
-        p.setsockopt(socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-        p.bind(('',PEER_LISTEN_PORT))
-        # This is a problem
-        while notdupe:
-            data, addr = await p.recvfrom(1024)
-            if logging_in:
-                d=data.decode()
-                if (d.startswith(MAGIC)):
-                    if(d == username.get()):
-                        notdupe=False
-                    elif(d not in server_cache):
-                        server_cache.append(d,addr[0])
-            else:
-                break
-    return notdupe
+lis = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+def close_listener():    
+    try:
+        listener_socket.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        listener_socket.close()
+
+def quit_program():
+    logging_in=False
+    logged_in=False
+    close_listener()
+    root.destroy()
+root.protocol('WM_DELETE_WINDOW', quit_program)
+
+def does_username_exist():
+    d=False
+    if username.get() in server_cache:
+        #pop(username.get())
+        d=True
+    return d
 
 def peer_listener():
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as l:
-        l.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # Disable after local testing
-        mreq = socket.inet_aton(MCAST_GROUP) + socket.inet_aton(MY_IP)
-        l.setsockopt(socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-        l.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
-        l.bind(('',PEER_LISTEN_PORT))
-        while True:
-            data, addr = l.recvfrom(1024)
-            d=data.decode()
-            peer_shout()
-            print("did it work")
-            if d.startswith(MAGIC) and d not in server_cache:
-                if d != username.get():
-                    server_cache.append(d,addr[0])
-                elif logged_in:
-                    peer_shout() # Tell the other guy who's boss
-                    # ^ Watch for this causing lag later on, might need to thread it if it causes problems
-                    continue
-                elif logging_in:
-                    server_cache.append(d,addr[0])
-        print("loop dead")
-listener_thread = threading.Thread(target=peer_listener)
-listener_thread.daemon=True # Not recommended for anything other than socket operations
-
+    global server_cache
+    print("inside: ",listener_socket)
+    i=0
+    #global logging_in
+    while listener_socket:
+        #print("blocking at recv")
+        data, addr = listener_socket.recvfrom(1024)
+        d=data.decode()
+        if not d:
+            print("dead thread")
+            print("Serv: ",server_cache)
+            break
+        elif d.startswith(MAGIC):
+            rec_user = d[len(MAGIC):]
+        else:
+            continue
+        #peer_shout()
+        #print("received data")
+        i+=1
+        #print("logging in: ",i,": ",logging_in)
+        if rec_user not in server_cache:
+            #print("not in cache")
+            if rec_user == username.get():
+                #print("same uname")
+                global logging_in
+                print("logging in: ",logging_in)
+                if logging_in:
+                    print("logging in")
+                    server_cache[rec_user]=addr[0]
+            else:
+                server_cache[rec_user]=addr[0]
+        print("Serv: ",server_cache)
+        """
+        if rec_user not in server_cache:
+            
+            print("added")
+            print("d: ",d[len(MAGIC):],"username: ",username.get())
+            if d.startswith(MAGIC) != username.get():
+                if logging_in:
+                    server_cache[d]=addr[0]
+                print("uhh don't?")
+            elif logged_in:
+                peer_shout() # Tell the other guy who's boss
+                # ^ Watch for this causing lag later on, might need to thread it if it causes problems
+                continue
+            elif logging_in:
+                server_cache[d]=addr[0]
+        """
 def peer_shout():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # Disable after local testing
+        s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 0) # <--- [CURRENT]
         s.setsockopt(socket.SOL_IP, socket.IP_MULTICAST_TTL, TTL)
+        message=MAGIC+username.get()
         for i in range(0, 200):
-            s.sendto(username.get().encode(), (MCAST_GROUP,PEER_LISTEN_PORT))
+            s.sendto(message.encode(), (MCAST_GROUP,PEER_LISTEN_PORT))
 #shout_thread = threading.Thread(peer_shout,None)
 
 # Server login function (will need to expand later)
 def login():
     logging_in=True
+    username.set(uname_t.get())
+        
+    if not username.get():
+        # [LATER] Do a proper popup here
+        print("No username entered")
+        return
     
-    # Shout your presence on network
-    # error cant be run
-    #asyncio.run(peer_shout())
     #asyncio.run(peer_listener())
     #async with asyncio.TaskGroup() as tg:
     #    tg.create_task(peer_shout())
     #    tg.peer_listener(peer_listener())
-    listener_thread.start()
+    
+    # Shout your presence on network
+    peer_shout()
     
     # [LATER] If there are already servers in cache, show them while searching maybe?
     
@@ -157,11 +169,8 @@ def login():
     center_window(search_w)
     search_w.after(1500, search_w.destroy) # Destroy window after waiting for 1.5 seconds
     
-    # These commands disable the root window until the popup window disappears
-    root.wm_attributes('-type', 'splash') # Completely disables root window, except moving it. Full disable only works on windows, so using this instead.
-    
-    # root.withdraw() # Completely hides/shows the window. Risky if there's any error, app will hang.
-    # root.deiconify()
+    # Completely disables the root window (except movement) until the popup window disappears. Full disable only works on windows, so using this instead.
+    root.wm_attributes('-type', 'splash')
     
     # disable_frame(login_page) # Disables all the children, can work with a custom titlebar, but not without it
     # enable_frame(login_page)
@@ -169,27 +178,30 @@ def login():
     # search_w.transient(root) # Splash window seems to do the job of these 2 already, but keeping in case I missed some interaction
     # search_w.grab_set()
     
-    # Check for other hosts & whether your username is already taken
-    # dupe = asyncio.run(check_duplicate_peer(username.get()))
-    dupe = False
     # Root will not update and wait here until search_w has been destroyed
     root.wait_window(search_w)
-
+    
     # After 2 seconds of wait -
     root.wm_attributes('-type', 'normal') # Enables window again
     
+    print(server_cache)
+    
+    # Check whether your username is already taken
+    dupe = does_username_exist()
     # If duplicate user already exists, stop login
     if dupe:
+        print("dupe")
         root.wm_attributes('-type', 'splash')
         tk.messagebox.showinfo(title="Warning!", message="User already exists!")
         root.wm_attributes('-type', 'normal')
         logging_in = False
+        #server_cache.pop(username.get())
         return
    
     # Login success !
     logging_in = False
     logged_in = True
-    username.set(uname_t.get())
+    
     loggedin_l.configure(text=loggedin_l.cget("text")+username.get())
     if not server_cache:
 		# set this system to be server
@@ -243,11 +255,48 @@ def valuser(newchar, current_string):
         return False
 vcmd = root.register(valuser)
 
+# ----------------------------------------------
+#                   VARIABLES
+# ----------------------------------------------
+
+# GUI variables
+login_page = ttk.Frame(root)
+server_page = ttk.Frame(root)
+server_list_page = ttk.Frame(root)
+
+# Message app variables
+server_cache = {}
+username=tk.StringVar()
+messages=tk.StringVar()
+
+# Network variables
+listener_thread = threading.Thread(target=peer_listener)
+
+try:
+    listener_socket=socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    listener_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # Disable after local testing
+    mreq = socket.inet_aton(MCAST_GROUP) + socket.inet_aton(MY_IP)
+    listener_socket.setsockopt(socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+    listener_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 0)
+    listener_socket.bind(('',PEER_LISTEN_PORT))
+    #listener_socket.setsockopt(socket.block
+    #print("what the fuck: ",listener_socket.getblocking())
+except Exception as e:
+    print("Error creating socket: ",e)
+    sys.exit(1)
+print("outside: ",listener_socket)
+
+# Status variables
+isServer = False
+logging_in = False
+logged_in = False
+in_game = False
+
 # 1st Window : Login. Enter username label and textbox (all rooted to login_page frame)
 uname_l = ttk.Label(login_page, text="Enter username", style="M.TLabel")
 uname_t = ttk.Entry(login_page, style="M.TEntry", font=('Ariel',25),  validate='key', validatecommand=(vcmd,"%S","%P")) # %S : Newly entered char, %P : Current full text
 enter_b = ttk.Button(login_page, text="Enter", style="M.TButton", command=login)
-quit_b = ttk.Button(login_page, text="Quit", style="M.TButton", command=root.destroy)
+quit_b = ttk.Button(login_page, text="Quit", style="M.TButton", command=quit_program)
 
 # Binding Enter key to allow login
 uname_t.bind("<Return>",login_enter)
@@ -303,6 +352,8 @@ logout_b.pack(padx=20, pady=20, side=tk.RIGHT, anchor='nw')
 
 # Main window loop
 def main():
+    # Start listener thread for other clients
+    listener_thread.start()
     # Display login page
     login_page.pack(fill='both',expand=1)
     root.mainloop()
