@@ -1,7 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox
 from tkinter import ttk
-import asyncio
 import socket
 import threading
 import select
@@ -40,8 +39,8 @@ def center_window(window):
     x = (screen_width - width) // 2
     y = (screen_height - height) // 2
     #print("width: ",width,"height: ",height,"x: ",x,"y: ",y)
-    window.geometry(f"{width}x{height}+{x}+{y}")
-    #window.geometry(f"+{x}+{y}")
+    #window.geometry(f"{width}x{height}+{x}+{y}")
+    window.geometry(f"+{x}+{y}")
 
 """ Frame disable enable : Not required as of now, but keeping in case needed in the future.
 def disable_frame(parent):
@@ -61,7 +60,7 @@ def enable_frame(parent):
             enableChildren(child)
 """
 
-lis = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+#lis = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 def close_listener():    
     try:
@@ -84,58 +83,37 @@ def does_username_exist():
     return d
 
 def peer_listener():
-    global server_cache
+    global server_cache,logging_in,username
     print("inside: ",listener_socket)
-    i=0
-    #global logging_in
+    #si=0
     while listener_socket:
         #print("blocking at recv")
-        data, addr = listener_socket.recvfrom(1024)
-        d=data.decode()
-        if not d:
-            print("dead thread")
-            print("Serv: ",server_cache)
+        try:
+            data, addr = listener_socket.recvfrom(1024)
+        except OSError:
             break
-        elif d.startswith(MAGIC):
-            rec_user = d[len(MAGIC):]
-        else:
-            continue
-        #peer_shout()
-        #print("received data")
-        i+=1
-        #print("logging in: ",i,": ",logging_in)
-        if rec_user not in server_cache:
-            #print("not in cache")
-            if rec_user == username.get():
-                #print("same uname")
-                global logging_in
-                print("logging in: ",logging_in)
-                if logging_in:
-                    print("logging in")
-                    server_cache[rec_user]=addr[0]
+        with lis_lock:
+            d=data.decode()
+            if d.startswith(MAGIC):
+                rec_user = d[len(MAGIC):]
             else:
-                server_cache[rec_user]=addr[0]
-        print("Serv: ",server_cache)
-        """
-        if rec_user not in server_cache:
-            
-            print("added")
-            print("d: ",d[len(MAGIC):],"username: ",username.get())
-            if d.startswith(MAGIC) != username.get():
-                if logging_in:
-                    server_cache[d]=addr[0]
-                print("uhh don't?")
-            elif logged_in:
-                peer_shout() # Tell the other guy who's boss
-                # ^ Watch for this causing lag later on, might need to thread it if it causes problems
                 continue
-            elif logging_in:
-                server_cache[d]=addr[0]
-        """
+
+            # Only do ops if this is not a peer in our records
+            if rec_user not in server_cache:
+                # Not logged in with our username yet
+                if not username.get() or logging_in:
+                    server_cache[rec_user]=addr[0]
+                # Logged in, username claimed
+                else:
+                    peer_shout()
+                    if rec_user != username.get():
+                        server_cache[rec_user]=addr[0]
+
 def peer_shout():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # Disable after local testing
-        s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 0) # <--- [CURRENT]
+        #s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # Disable after local testing
+        s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 0)
         s.setsockopt(socket.SOL_IP, socket.IP_MULTICAST_TTL, TTL)
         message=MAGIC+username.get()
         for i in range(0, 200):
@@ -144,6 +122,7 @@ def peer_shout():
 
 # Server login function (will need to expand later)
 def login():
+    global logging_in,logged_in,username,isServer
     logging_in=True
     username.set(uname_t.get())
         
@@ -151,11 +130,6 @@ def login():
         # [LATER] Do a proper popup here
         print("No username entered")
         return
-    
-    #asyncio.run(peer_listener())
-    #async with asyncio.TaskGroup() as tg:
-    #    tg.create_task(peer_shout())
-    #    tg.peer_listener(peer_listener())
     
     # Shout your presence on network
     peer_shout()
@@ -172,9 +146,6 @@ def login():
     # Completely disables the root window (except movement) until the popup window disappears. Full disable only works on windows, so using this instead.
     root.wm_attributes('-type', 'splash')
     
-    # disable_frame(login_page) # Disables all the children, can work with a custom titlebar, but not without it
-    # enable_frame(login_page)
-    
     # search_w.transient(root) # Splash window seems to do the job of these 2 already, but keeping in case I missed some interaction
     # search_w.grab_set()
     
@@ -184,18 +155,15 @@ def login():
     # After 2 seconds of wait -
     root.wm_attributes('-type', 'normal') # Enables window again
     
-    print(server_cache)
+    # [LATER] Check all servers in cache for alive status (TCP)
     
     # Check whether your username is already taken
-    dupe = does_username_exist()
-    # If duplicate user already exists, stop login
-    if dupe:
+    if username.get() in server_cache:
         print("dupe")
         root.wm_attributes('-type', 'splash')
         tk.messagebox.showinfo(title="Warning!", message="User already exists!")
         root.wm_attributes('-type', 'normal')
         logging_in = False
-        #server_cache.pop(username.get())
         return
    
     # Login success !
@@ -207,8 +175,7 @@ def login():
 		# set this system to be server
         isServer = True
         server_page.pack(fill='both',expand=True)
-        # Set up listener to listen to presence of other hosts
-        #asyncio.run(peer_listener())
+        root.update()
         center_window(root)
     else:
         isServer = False
@@ -216,12 +183,13 @@ def login():
         # TCP connection
     login_page.pack_forget()
     #center_window(root)
-    
+
 # idk what better way to do this, but Enter key function sends 'event' which mouse click doesn't
 def login_enter(event):
     login()
 
 def logout():
+    global logged_in
     logged_in=False
     loggedin_l.configure(text="Logged in as: ")
     server_page.pack_forget()
@@ -271,6 +239,7 @@ messages=tk.StringVar()
 
 # Network variables
 listener_thread = threading.Thread(target=peer_listener)
+lis_lock = threading.Lock()
 
 try:
     listener_socket=socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
