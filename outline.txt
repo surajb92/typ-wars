@@ -1,23 +1,25 @@
 OUTLINE | WIP Notes
 ===================
 
-To do:
-1. Go to new window
+Progress:
+1. Start with entering a username in Login window
     a. Message box urging player to wait 2 seconds [DONE]
-        i. Popup message [DONE]
-        ii. 1.5 seconds wait while it searches server [DONE/UT]
-        iii. Set this system to client if no other server [DONE/UT]
-        iv. Move to server selection frame if there is already a server in the network [DONE/UT]
-        v. If username already exists, popup and return, clear username field
-2. Figure out how networking works = Result : Too complicated to do over internet (NAT Tunneling etc.). Try with just over local network for now.
-    a. Socket programming : Simple client - server connection with localhost [DONE]
-    b. Send multicast to local network with server's IP. [DONE]
-    c. Enable ports 3000-3100 for TCP and UDP on firewall (testing purposes, will likely finalize 3003-5 as ports to use) [DONE]
+        i. Popup message set up.
+        ii. Set up screen to wait 1.5 seconds while it searches for peers.
+        iii. System will be set to client if no other peer working as server.
+        iv. Screen will move to server selection frame if there is already a server in the network.
+        v. If username already exists, a warning will popup, exit login function & clear username field.
+        vi. Removed multicast loop to avoid duplicate username shenanigans, but now requires at least 2 devices to test.
+        vii. Fixed global variable changes not reflecting in looping thread with lock and global keyword.
 
-CURRENTLY WORKING ON :
+CURRENTLY WORKING ON : Need proper popup when login attempted with empty username field.
 ======================
-Sender multicast is reflected on the receiver socket, messing up duplicate username detection.
-Need some way to not have that happen.
+
+NEXT STEPS :
+============
+TCP Listener for active servers.
+^ (Find out if this is possible to do only when logged in, and how to exit listener state gracefully or if SHUTDOWN is still needed) <-- iirc cannot reopen socket after closing.
+Server tester to check for active servers from cache, and remove inactive ones (with lock).
 
 
 Useful
