@@ -10,6 +10,11 @@ root = tk.Tk()
 root.title("Typ Wars")
 #root.geometry("720x480") # Setting static dimensions affects dynamic resize, so leave it as is
 
+class globalState:
+    truth=True
+    def isTruth():
+        return truth
+
 # ----------------------------------------------
 #                   NETWORKING 
 # ----------------------------------------------
@@ -23,7 +28,7 @@ MY_IP = get_ip()
 MCAST_GROUP = "224.1.1.251"
 MAGIC = "!@#typ_wars#@!"
 PEER_LISTEN_PORT=3003
-PORT=3000
+SERVER_PORT=3000
 TTL=2
 
 # ----------------------------------------------
@@ -60,34 +65,90 @@ def enable_frame(parent):
             enableChildren(child)
 """
 
-#lis = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-def close_listener():    
-    try:
-        listener_socket.shutdown(socket.SHUT_RDWR)
-    except OSError:
-        listener_socket.close()
-
 def quit_program():
+    global logging_in,logged_in,listener_socket,server_socket
     logging_in=False
     logged_in=False
-    close_listener()
+    try:
+        listener_socket.shutdown(socket.SHUT_RDWR)
+    except Exception as e:
+        listener_socket.close()
+    server_socket.shutdown(socket.SHUT_RDWR)
+    try:
+        listener_thread.join()
+        server_thread.join()
+    except Exception as e:
+        print("Error closing threads: ",e)
     root.destroy()
+    
 root.protocol('WM_DELETE_WINDOW', quit_program)
 
-def does_username_exist():
-    d=False
-    if username.get() in server_cache:
-        #pop(username.get())
-        d=True
-    return d
+def warning_popup(window, warning_text):
+    window.wm_attributes('-type', 'splash')
+    tk.messagebox.showinfo(title="Warning!", message=warning_text, icon=tk.messagebox.WARNING)
+    window.wm_attributes('-type', 'normal')
 
+# Running as thread from the start
+def server_refresh():
+    global server_cache
+    with lis_lock:
+        print("Refreshing: ",server_cache)
+        for h in server_cache.copy():
+            print("in loop")
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test:
+                #test.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                #test.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+                test.settimeout(1) # temp solution, connect is still not working
+                try:
+                    print('trying to connect to: ',(server_cache[h],SERVER_PORT))
+                    test.connect((server_cache[h],SERVER_PORT))
+                    #test.connect(("8.8.8.8",3001))
+                except Exception as e:
+                    print("EXCEPTION! > ",e)
+                    del server_cache[h]
+                    continue
+                m="IS_SERVER"
+                test.sendall(m.encode())
+                reply=test.recv(1024).decode()
+                print("reply is server?: ",reply)
+                if reply!="YES":
+                    del server_cache[h]
+
+# Split from "server_process" thread
+def server_process(conn,addr):
+    global isServer
+    print("Entered process")
+    msg = conn.recv(1024).decode()
+    if msg=="IS_SERVER":
+        if isServer:
+            conn.sendall("YES".encode())
+        else:
+            conn.sendall("NO".encode())
+    #elif msg=="CONNECT": # Game data exchange here ??? REALLY ?!?! Might need to start a new thread
+    #    pass
+
+# Running as thread from the start
+def server_listener():
+    global server_socket
+    print("Listening")
+    server_socket.listen(5)
+    while server_socket:
+        try:
+            print("Listen found, connecting")
+            new_con, new_addr = server_socket.accept()
+            print("thread opened")
+            threading.Thread(target=server_process,args=(new_con,new_addr)).start()
+            print("done")
+        except OSError:
+            print("Connection error")
+            break
+        except Exception as e:
+            print("inside listener thread: ",e)
+
+# Running as thread from start
 def peer_listener():
     global server_cache,logging_in,username
-    print("inside: ",listener_socket)
-    #si=0
     while listener_socket:
-        #print("blocking at recv")
         try:
             data, addr = listener_socket.recvfrom(1024)
         except OSError:
@@ -98,7 +159,10 @@ def peer_listener():
                 rec_user = d[len(MAGIC):]
             else:
                 continue
-
+            # Delete existing IP if any
+            if addr[0] in server_cache.values():
+                t=list(server_cache.keys())[list(server_cache.values()).index(addr[0])]
+                del server_cache[t]
             # Only do ops if this is not a peer in our records
             if rec_user not in server_cache:
                 # Not logged in with our username yet
@@ -112,29 +176,35 @@ def peer_listener():
 
 def peer_shout():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as s:
-        #s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # Disable after local testing
         s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 0)
         s.setsockopt(socket.SOL_IP, socket.IP_MULTICAST_TTL, TTL)
         message=MAGIC+username.get()
         for i in range(0, 200):
             s.sendto(message.encode(), (MCAST_GROUP,PEER_LISTEN_PORT))
-#shout_thread = threading.Thread(peer_shout,None)
 
 # Server login function (will need to expand later)
 def login():
-    global logging_in,logged_in,username,isServer
-    logging_in=True
-    username.set(uname_t.get())
+    # Globals are a PITA, I get it, but I'll have to work with them for now
+    # Maybe do global state class as the next step? idk how to push that onto tkinter functions though...
+    # Live and learn?
+    global logging_in,logged_in,username,isServer,root,server_cache
+    
+    with lis_lock:
+        logging_in=True
+        username.set(uname_t.get())
         
     if not username.get():
-        # [LATER] Do a proper popup here
-        print("No username entered")
+        warning_popup(root,"No username entered")
         return
     
+    # [LATER] If there are already servers in cache, show them while searching maybe?
+    server_refresh()
+    if username.get() in server_cache:
+        warning_popup(root,"User already exists!")
+        return
+        
     # Shout your presence on network
     peer_shout()
-    
-    # [LATER] If there are already servers in cache, show them while searching maybe?
     
     # Set up popup window to urge player to wait while we search for peers
     search_w = tk.Toplevel(root)
@@ -146,8 +216,8 @@ def login():
     # Completely disables the root window (except movement) until the popup window disappears. Full disable only works on windows, so using this instead.
     root.wm_attributes('-type', 'splash')
     
-    # search_w.transient(root) # Splash window seems to do the job of these 2 already, but keeping in case I missed some interaction
-    # search_w.grab_set()
+    # search_w.transient(root) # Splash window does not stop tkinter buttons from being clicked without this
+    search_w.grab_set()
     
     # Root will not update and wait here until search_w has been destroyed
     root.wait_window(search_w)
@@ -155,17 +225,17 @@ def login():
     # After 2 seconds of wait -
     root.wm_attributes('-type', 'normal') # Enables window again
     
+    server_refresh()
+    
     # [LATER] Check all servers in cache for alive status (TCP)
     
     # Check whether your username is already taken
     if username.get() in server_cache:
-        print("dupe")
-        root.wm_attributes('-type', 'splash')
-        tk.messagebox.showinfo(title="Warning!", message="User already exists!")
-        root.wm_attributes('-type', 'normal')
-        logging_in = False
+        with lis_lock:
+            logging_in = False
+        warning_popup(root,"User already exists!")
         return
-   
+
     # Login success !
     logging_in = False
     logged_in = True
@@ -189,13 +259,17 @@ def login_enter(event):
     login()
 
 def logout():
-    global logged_in
-    logged_in=False
+    global logged_in,isServer
+    with lis_lock:
+        logged_in=False
+        isServer=False
+        username.set('')
     loggedin_l.configure(text="Logged in as: ")
     server_page.pack_forget()
     server_list_page.pack_forget()
     login_page.pack(fill='both',expand=True)
 
+# [LATER] Will need to revamp with connected peer
 def send_message():
     # now I see the problem with not using classes...
     # ...or do I?
@@ -215,9 +289,9 @@ style.configure("M.TEntry", foreground="red") # For some reason Entry font can't
 style.configure("M.TButton", font=('Ariel',25))
 style.configure("S.TButton", font=('Ariel',15))
 
-# Validation function, to make sure there's no space in the "username" field and restrict to 16 characters
+# tk validation function, to make sure there's no spaces in the "username" field and restrict to 16 characters
 def valuser(newchar, current_string):
-    if( " " not in newchar and len(current_string) <= 15 ):
+    if( ' ' not in newchar and len(current_string) <= 15 ):
         return True
     else:
         return False
@@ -239,21 +313,24 @@ messages=tk.StringVar()
 
 # Network variables
 listener_thread = threading.Thread(target=peer_listener)
+server_thread = threading.Thread(target=server_listener)
 lis_lock = threading.Lock()
 
 try:
     listener_socket=socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    listener_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # Disable after local testing
+    #listener_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # Disable after local testing
     mreq = socket.inet_aton(MCAST_GROUP) + socket.inet_aton(MY_IP)
     listener_socket.setsockopt(socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, mreq)
     listener_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 0)
     listener_socket.bind(('',PEER_LISTEN_PORT))
-    #listener_socket.setsockopt(socket.block
-    #print("what the fuck: ",listener_socket.getblocking())
+    
+    server_socket=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    #server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    #server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    server_socket.bind((MY_IP,SERVER_PORT))
 except Exception as e:
-    print("Error creating socket: ",e)
+    print("Error creating sockets: ",e)
     sys.exit(1)
-print("outside: ",listener_socket)
 
 # Status variables
 isServer = False
@@ -321,13 +398,13 @@ logout_b.pack(padx=20, pady=20, side=tk.RIGHT, anchor='nw')
 
 # Main window loop
 def main():
-    # Start listener thread for other clients
+    # Start threads
     listener_thread.start()
+    server_thread.start()
     # Display login page
     login_page.pack(fill='both',expand=1)
     root.mainloop()
 
 # Script import protection
 if __name__ == '__main__':
-    # asyncio.run(main())
     main()

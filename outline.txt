@@ -12,7 +12,13 @@ Progress:
         vi. Removed multicast loop to avoid duplicate username shenanigans, but now requires at least 2 devices to test.
         vii. Fixed global variable changes not reflecting in looping thread with lock and global keyword.
 
-CURRENTLY WORKING ON : Need proper popup when login attempted with empty username field.
+CURRENTLY WORKING ON :  Testing A->B login for duplicates.
+                        Login with username "aaa" in A. Logout.
+                        Login with username "aaa" in B. Behavior works properly, but need to know why server cache is populated by a logged out client
+                        TCP thread had not started, did that, but now it hangs during "connect"
+                        Thread for server_process hadn't started...
+                        anyway, now issue is just sending and receiving stuff
+
 ======================
 
 NEXT STEPS :
