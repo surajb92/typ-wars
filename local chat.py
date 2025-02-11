@@ -10,11 +10,48 @@ root = tk.Tk()
 root.title("Typ Wars")
 #root.geometry("720x480") # Setting static dimensions affects dynamic resize, so leave it as is
 
-class globalState:
-    truth=True
-    def isTruth():
-        return truth
+# ----------------------------------------------
+#              GLOBAL STATE MACHINE
+# ----------------------------------------------
 
+class globalState:
+    def __init__(self):
+        self.isServer = False
+        self.STATE="START"
+        self.userName=''
+        self.serverCache = {}
+        self.gLock = threading.Lock()
+    # Functions to change state
+    def start_login(self):
+        with self.gLock:
+            self.STATE="LOGGING_IN"
+    def complete_login(self,u):
+        with self.gLock:
+            self.userName=u
+            self.STATE="LOGGED_IN"
+    def logout(self):
+        with self.gLock:
+            self.username=''
+            self.STATE="START"
+            self.isServer=False
+    def set_server_state(self,state):
+        with self.gLock:
+            self.isServer=state
+    def add_server(self,sv):
+        with self.gLock:
+            
+    # Functions to read state
+    def get_server(self):
+        with self.gLock:
+            return self.isServer
+    def get_username(self):
+        with self.gLock:
+            return self.userName
+    def get_state(self):
+        with self.gLock:
+            return self.STATE
+
+GG=globalState()
 # ----------------------------------------------
 #                   NETWORKING 
 # ----------------------------------------------
@@ -34,7 +71,7 @@ TTL=2
 # ----------------------------------------------
 #                   FUNCTIONS 
 # ----------------------------------------------
-        
+
 # Center the window
 def center_window(window):
     width = window.winfo_reqwidth()
@@ -46,24 +83,6 @@ def center_window(window):
     #print("width: ",width,"height: ",height,"x: ",x,"y: ",y)
     #window.geometry(f"{width}x{height}+{x}+{y}")
     window.geometry(f"+{x}+{y}")
-
-""" Frame disable enable : Not required as of now, but keeping in case needed in the future.
-def disable_frame(parent):
-    for child in parent.winfo_children():
-        wtype = child.winfo_class()
-        if wtype not in ('Frame','Labelframe','TFrame','TLabelframe'):
-            child.configure(state='disable')
-        else:
-            disableChildren(child)
-
-def enable_frame(parent):
-    for child in parent.winfo_children():
-        wtype = child.winfo_class()
-        if wtype not in ('Frame','Labelframe','TFrame','TLabelframe'):
-            child.configure(state='normal')
-        else:
-            enableChildren(child)
-"""
 
 def quit_program():
     global logging_in,logged_in,listener_socket,server_socket
@@ -89,30 +108,29 @@ def warning_popup(window, warning_text):
     window.wm_attributes('-type', 'normal')
 
 # Running as thread from the start
-def server_refresh():
+def server_refresh(G):
     global server_cache
-    with lis_lock:
-        print("Refreshing: ",server_cache)
-        for h in server_cache.copy():
-            print("in loop")
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test:
-                #test.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                #test.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-                test.settimeout(1) # temp solution, connect is still not working
-                try:
-                    print('trying to connect to: ',(server_cache[h],SERVER_PORT))
-                    test.connect((server_cache[h],SERVER_PORT))
-                    #test.connect(("8.8.8.8",3001))
-                except Exception as e:
-                    print("EXCEPTION! > ",e)
-                    del server_cache[h]
-                    continue
-                m="IS_SERVER"
-                test.sendall(m.encode())
-                reply=test.recv(1024).decode()
-                print("reply is server?: ",reply)
-                if reply!="YES":
-                    del server_cache[h]
+    print("Refreshing: ",server_cache)
+    for h in server_cache.copy():
+        print("in loop")
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test:
+            #test.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            #test.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            #test.settimeout(1) # temp solution, connect is still not working
+            try:
+                print('trying to connect to: ',(server_cache[h],SERVER_PORT))
+                test.connect((server_cache[h],SERVER_PORT))
+                #test.connect(("8.8.8.8",3001))
+            except Exception as e:
+                print("EXCEPTION! > ",e)
+                del server_cache[h]
+                continue
+            m="IS_SERVER"
+            test.sendall(m.encode())
+            reply=test.recv(1024).decode()
+            print("reply is server?: ",reply)
+            if reply!="YES":
+                del server_cache[h]
 
 # Split from "server_process" thread
 def server_process(conn,addr):
@@ -139,11 +157,10 @@ def server_listener():
             print("thread opened")
             threading.Thread(target=server_process,args=(new_con,new_addr)).start()
             print("done")
-        except OSError:
-            print("Connection error")
-            break
         except Exception as e:
-            print("inside listener thread: ",e)
+            print("Server Listener is kill",e)
+            server_socket.close()
+            break
 
 # Running as thread from start
 def peer_listener():
@@ -183,22 +200,26 @@ def peer_shout():
             s.sendto(message.encode(), (MCAST_GROUP,PEER_LISTEN_PORT))
 
 # Server login function (will need to expand later)
-def login():
+def login(G):
     # Globals are a PITA, I get it, but I'll have to work with them for now
     # Maybe do global state class as the next step? idk how to push that onto tkinter functions though...
     # Live and learn?
-    global logging_in,logged_in,username,isServer,root,server_cache
     
-    with lis_lock:
-        logging_in=True
-        username.set(uname_t.get())
-        
+    #global logging_in,logged_in,username,isServer,root,server_cache
+    
+    #with lis_lock:
+    #    logging_in=True
+    #    username.set(uname_t.get())
+    
     if not username.get():
         warning_popup(root,"No username entered")
         return
+        
+    G.start_login()
     
     # [LATER] If there are already servers in cache, show them while searching maybe?
-    server_refresh()
+    server_refresh(G)
+    
     if username.get() in server_cache:
         warning_popup(root,"User already exists!")
         return
@@ -341,7 +362,7 @@ in_game = False
 # 1st Window : Login. Enter username label and textbox (all rooted to login_page frame)
 uname_l = ttk.Label(login_page, text="Enter username", style="M.TLabel")
 uname_t = ttk.Entry(login_page, style="M.TEntry", font=('Ariel',25),  validate='key', validatecommand=(vcmd,"%S","%P")) # %S : Newly entered char, %P : Current full text
-enter_b = ttk.Button(login_page, text="Enter", style="M.TButton", command=login)
+enter_b = ttk.Button(login_page, text="Enter", style="M.TButton", command=lambda: login(GG))
 quit_b = ttk.Button(login_page, text="Quit", style="M.TButton", command=quit_program)
 
 # Binding Enter key to allow login
