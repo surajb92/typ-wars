@@ -11,23 +11,14 @@ Progress:
         v. If username already exists, a warning will popup, exit login function & clear username field.
         vi. Removed multicast loop to avoid duplicate username shenanigans, but now requires at least 2 devices to test.
         vii. Fixed global variable changes not reflecting in looping thread with lock and global keyword.
+    b. Major update : Converted Global state into state machine class, passing the object in order to change it, with locks on every operation
+    c. Dict to track server status for peers added to Game State. Can use this to populate "Join" page.
+    d. Server refresh now only
 
-CURRENTLY WORKING ON :  Testing A->B login for duplicates.
-                        Login with username "aaa" in A. Logout.
-                        Login with username "aaa" in B. Behavior works properly, but need to know why server cache is populated by a logged out client
-                        TCP thread had not started, did that, but now it hangs during "connect"
-                        Thread for server_process hadn't started...
-                        anyway, now issue is just sending and receiving stuff
-
-======================
-
-NEXT STEPS :
-============
-TCP Listener for active servers.
-^ (Find out if this is possible to do only when logged in, and how to exit listener state gracefully or if SHUTDOWN is still needed) <-- iirc cannot reopen socket after closing.
-Server tester to check for active servers from cache, and remove inactive ones (with lock).
-
-
+CURRENTLY WORKING ON :  server refresh (peer refresh?) only deletes if user doesn't exist, or else just updates server status
+                        Test all changes, join page, login, logout, dupe detection, multiple retries etc.
+                        List hostnames in "Join" page based on peer server list.
+                        Set up proper versioning in git.
 Useful
 ======
 TCP dump :
