@@ -19,6 +19,7 @@ CURRENTLY WORKING ON :  server refresh (peer refresh?) only deletes if user does
                         Test all changes, join page, login, logout, dupe detection, multiple retries etc.
                         List hostnames in "Join" page based on peer server list.
                         Set up proper versioning in git.
+                        ! Server display refresh on login
 Useful
 ======
 TCP dump :

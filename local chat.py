@@ -1,5 +1,7 @@
 import tkinter as tk
+#import tkinter.simpledialog
 from tkinter import messagebox
+from tkinter import simpledialog
 from tkinter import ttk
 import socket
 import threading
@@ -45,6 +47,7 @@ class globalState:
         with self.gLock:
             self.peerCache[hostname]=address
             if hostname not in self.peerIsServer:
+                
                 self.peerIsServer[hostname]=False
             print("Server added!:",hostname,address)
     def remove_peer(self,hostname):
@@ -73,9 +76,20 @@ class globalState:
             for host,status in self.peerIsServer.items():
                 if status:
                     s_list.append(host)
+            print("peer server list function: ",s_list)
             return s_list
 
 GG=globalState()
+
+#class pleaseWait(tk.simpledialog):
+#    def __init__(self, parent, title):
+#        self.message = message
+#        tk.simpledialog.__init__(self, parent, title=title)# text=message)
+#    def body(self, master):
+#        Label(self, text=self.message).pack()
+#    def buttonbox(self):
+#        pass
+
 # ----------------------------------------------
 #                   NETWORKING 
 # ----------------------------------------------
@@ -98,6 +112,7 @@ TTL=2
 
 # Center the window
 def center_window(window):
+    window.update()
     width = window.winfo_reqwidth()
     height = window.winfo_reqheight()
     screen_width = window.winfo_screenwidth()
@@ -105,10 +120,12 @@ def center_window(window):
     x = (screen_width - width) // 2
     y = (screen_height - height) // 2
     #print("width: ",width,"height: ",height,"x: ",x,"y: ",y)
+    #window.update()
     #window.geometry(f"{width}x{height}+{x}+{y}")
     window.geometry(f"+{x}+{y}")
 
 def quit_program(G):
+    logout_shout(G)
     G.logout()
     try:
         listener_socket.shutdown(socket.SHUT_RDWR)
@@ -126,10 +143,9 @@ root.protocol('WM_DELETE_WINDOW', lambda: quit_program(GG))
 
 def warning_popup(window, warning_text):
     window.wm_attributes('-type', 'splash')
-    tk.messagebox.showinfo(title="Warning!", message=warning_text, icon=tk.messagebox.WARNING)
+    tk.messagebox.showwarning(title="Warning!", message=warning_text) #, icon=tk.messagebox.WARNING)
     window.wm_attributes('-type', 'normal')
 
-# Running as thread from the start
 def server_refresh(G):
     print("Refreshing: ",G.get_peer_cache())
     servers=G.get_peer_cache().copy()
@@ -180,6 +196,14 @@ def server_listener(G):
             server_socket.close()
             break
 
+def server_display_refresh(G):
+    server_list.delete(0,tk.END)
+    j=1
+    print("Refreshing servers: ", G.get_peer_server_list())
+    for i in G.get_peer_server_list():
+        server_list.insert(j, i)
+        j+=1
+
 # Running as thread from start
 def peer_listener(G):
     while True:
@@ -196,23 +220,28 @@ def peer_listener(G):
         #if addr[0] in G.get_peer_cache() and rec_user=="#@!__EXIT__!@#":
         #        t=list(G.get_peer_cache().keys())[list(G.get_peer_cache().values()).index(addr[0])]
         #        G.remove_peer(t)
-        print("rec: ",rec_user)
+        #print("rec: ",rec_user)
         
         # Remove peer entry if you get logout shout from peer
         if rec_user=="#@!__EXIT__!@#":
-            t=list(G.get_peer_cache().keys())[list(G.get_peer_cache().values()).index(addr[0])] # get hostname of address from which "logout" came
-            if t:
+            if addr[0] in G.get_peer_cache().values():
+                t=list(G.get_peer_cache().keys())[list(G.get_peer_cache().values()).index(addr[0])] # get hostname of address from which "logout" came
                 G.remove_peer(t)
+                
         # Check if peer is already in records, process otherwise
         elif rec_user not in G.get_peer_cache():
-            # Logged in
-            if G.get_state()!="LOGGED_IN":
+            # I'm logged in
+            if G.get_state()=="LOGGED_IN":
+                print("Logged in")
                 peer_shout(G)
                 if rec_user != G.get_username():
+                    print("not same uname, so adding")
                     G.add_peer(rec_user,addr[0])
-            # Not logged in yet
+            # I'm not logged in yet
             else:
+                print("not logged in, so adding")
                 G.add_peer(rec_user,addr[0])
+        #server_refresh(G)
 
 def logout_shout(G):
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as s:
@@ -245,6 +274,9 @@ def login(event,G):
     # Set game state for login
     G.start_login(uname_t.get())
     
+    # This is to prevent repeated "Enter" keypresses from Entry widget from calling "login" function multiple times
+    root.focus_set()
+    
     # [LATER] If there are already servers in cache, show them while searching maybe?
     
     # Shout your presence on network
@@ -252,14 +284,14 @@ def login(event,G):
     
     # Set up popup window to urge player to wait while we search for peers
     search_w = tk.Toplevel(root)
+    
     search_w.overrideredirect(True) # Hide titlebar
     tk.Message(search_w, text="Searching for other players...\nPlease wait", anchor='center',padx=20, pady=20).pack()
     center_window(search_w)
-    search_w.after(1500, search_w.destroy) # Destroy window after waiting for 1.5 seconds
+    search_w.after(700, search_w.destroy) # Destroy window after waiting for 700ms
     
-    # search_w.transient(root) # Splash window does not stop tkinter buttons from being clicked without this
-    # search_w.wait_visibility() # Some shenanigans with how this works with button command but not with direct bind.. weird..
-    search_w.grab_set()
+    # search_w.wait_visibility() # Some shenanigans with how this works with button command but not with direct bind.. weird.. (seems fixed now though)
+    search_w.grab_set() # Splash window does not stop tkinter buttons from being clicked without this
     
     # Completely disables the root window (except movement) until the popup window disappears. Full disable only works on windows, so using this instead.
     root.wm_attributes('-type', 'splash')
@@ -276,7 +308,7 @@ def login(event,G):
     # Check whether your username is already taken
     if uname_t.get() in G.get_peer_cache():
         warning_popup(root,"User already exists!")
-        G.logout()
+        logout(G)
         return
 
     # Login success !
@@ -284,27 +316,30 @@ def login(event,G):
     
     loggedin_l.configure(text=loggedin_l.cget("text")+G.get_username())
     if not G.get_peer_server_list():
-		# set this system to be server
-        #isServer = True
+		# If there's no other server online, set this system to be server
         G.set_server_state(True)
         server_page.pack(fill='both',expand=True)
-        root.update()
         center_window(root)
+        my_message.focus_set()
     else:
-        #isServer = False
         G.set_server_state(False)
         server_list_page.pack(fill='both',expand=True)
-        # TCP connection
+        for i in G.get_peer_server_list():
+            server_list.insert(1, i)
+        center_window(root)
+        # [LATER] TCP connection to server ?
     login_page.pack_forget()
-    #center_window(root)
 
 def logout(G):
+    server_list.delete(0,tk.END)
     G.logout()
     logout_shout(G)    
     loggedin_l.configure(text="Logged in as: ")
     server_page.pack_forget()
     server_list_page.pack_forget()
     login_page.pack(fill='both',expand=True)
+    center_window(root)
+    uname_t.focus_set()
 
 # [LATER] Will need to revamp with connected peer
 def send_message(event,G):
@@ -411,15 +446,15 @@ loggedin_l.pack(padx=10, pady=10, side=tk.LEFT, anchor='nw')
 logout_b.pack(pady = 20, padx=20, side=tk.RIGHT, anchor='ne')
 message_list.pack(padx=25, pady=25, side=tk.TOP, fill='x')
 message_l.pack(pady = 20, padx=20, side=tk.LEFT, anchor='w')
-my_message.pack(pady = 20, padx=20, side=tk.LEFT, anchor='n')
-send_b.pack(pady = 20, padx=20)#, side=tk.LEFT)
+my_message.pack(pady = 20, padx=20, side=tk.LEFT, fill='x')
+send_b.pack(pady = 20, padx=20, side=tk.RIGHT)
 #"""
 
 # 3rd Window : Server List. If there are other users online, display list.
 list_l = ttk.Label(server_list_page, text="List of users online: ", style="M.TLabel")
-server_list = tk.Text(server_list_page, bg='white')
+server_list = tk.Listbox(server_list_page, bg='white')
 join_b = ttk.Button(server_list_page, text="Join", style="S.TButton")
-logout_b = ttk.Button(server_list_page, text="Logout", style="S.TButton", command=lambda: logout(G))
+logout_b = ttk.Button(server_list_page, text="Logout", style="S.TButton", command=lambda: logout(GG))
 
 # Pack Server List page items
 list_l.pack(padx=20, pady=20, side=tk.TOP, anchor='nw')
@@ -433,7 +468,8 @@ def main():
     listener_thread.start()
     server_thread.start()
     # Display login page
-    login_page.pack(fill='both',expand=1)
+    login_page.pack(fill='both',expand=True)
+    uname_t.focus_set()    
     root.mainloop()
 
 # Script import protection
