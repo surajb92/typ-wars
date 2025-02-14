@@ -3,23 +3,23 @@ OUTLINE | WIP Notes
 
 Progress:
 1. Start with entering a username in Login window
-    a. Message box urging player to wait 2 seconds [DONE]
-        i. Popup message set up.
+    a. Implement server discovery.
+        i. Popup message urging player to wait 2 seconds set up.
         ii. Set up screen to wait 1.5 seconds while it searches for peers.
         iii. System will be set to client if no other peer working as server.
         iv. Screen will move to server selection frame if there is already a server in the network.
         v. If username already exists, a warning will popup, exit login function & clear username field.
         vi. Removed multicast loop to avoid duplicate username shenanigans, but now requires at least 2 devices to test.
         vii. Fixed global variable changes not reflecting in looping thread with lock and global keyword.
+        viii. Encountered peer_shout loop when facing duplicate username, implemented dirty fix.
     b. Major update : Converted Global state into state machine class, passing the object in order to change it, with locks on every operation
     c. Dict to track server status for peers added to Game State. Can use this to populate "Join" page.
-    d. Server refresh now only
+    d. Peer server status will now be refreshed once login is completed.
+    e. Peers with server roles logging out and logging back in updates the "client page" list immediately.
 
-CURRENTLY WORKING ON :  server refresh (peer refresh?) only deletes if user doesn't exist, or else just updates server status
-                        Test all changes, join page, login, logout, dupe detection, multiple retries etc.
-                        List hostnames in "Join" page based on peer server list.
-                        Set up proper versioning in git.
-                        ! Server display refresh on login
+CURRENTLY WORKING ON    : Set up proper versioning with version numbers (tags) in git.
+                          Make a test thread where you can raise an exception from one thread into another, to see if there's a good way to gracefully close listeners.
+
 Useful
 ======
 TCP dump :

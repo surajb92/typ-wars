@@ -47,9 +47,8 @@ class globalState:
         with self.gLock:
             self.peerCache[hostname]=address
             if hostname not in self.peerIsServer:
-                
                 self.peerIsServer[hostname]=False
-            print("Server added!:",hostname,address)
+            dbg("Server added!:",hostname,address)
     def remove_peer(self,hostname):
         with self.gLock:
             del self.peerCache[hostname]
@@ -63,7 +62,17 @@ class globalState:
             return self.isServer
     def get_peer_cache(self):
         with self.gLock:
+            # Basically, __TEMP__ addresses are created for peers with same hostname to avoid peer_shout loop in udp_peer_listener, and will usually get
+            # deleted immediately after the peer sends logout_shout. This "if" is there to handle any micro issues that may arise due to
+            # referencing peerCache while those placeholder addresses are still present in it.
+            if "__TEMP__" in self.peerCache.values():
+                for h,a in self.peerCache.copy().items():
+                    if a=="__TEMP__":
+                        del self.peerCache[h]
             return self.peerCache
+    def get_peer_cache_UNCLEAN_DO_NOT_USE(self): # My clever "solution" just causes the loop again...
+        with self.gLock:
+            return self.peerCache # This is a bandaid fix which will likely be permanent, PLEASE do not use this function outside udp_peer_listener !
     def get_username(self):
         with self.gLock:
             return self.userName
@@ -76,7 +85,6 @@ class globalState:
             for host,status in self.peerIsServer.items():
                 if status:
                     s_list.append(host)
-            print("peer server list function: ",s_list)
             return s_list
 
 GG=globalState()
@@ -102,13 +110,22 @@ def get_ip():
 MY_IP = get_ip()
 MCAST_GROUP = "224.1.1.251"
 MAGIC = "!@#typ_wars#@!"
-PEER_LISTEN_PORT=3003
-SERVER_PORT=3000
+PEER_LISTEN_PORT=3001
+SERVER_PORT=3002
 TTL=2
 
 # ----------------------------------------------
 #                   FUNCTIONS 
 # ----------------------------------------------
+
+# For debugging
+def dbg(*args,d=0):
+    if d==0:
+        print(*args) # Remove for production
+    else:
+        # These are exceptions, log these into file or smth later on, for now just print
+        print("DebugLine: ")
+        print(*args)
 
 # Center the window
 def center_window(window):
@@ -119,24 +136,24 @@ def center_window(window):
     screen_height = window.winfo_screenheight()
     x = (screen_width - width) // 2
     y = (screen_height - height) // 2
-    #print("width: ",width,"height: ",height,"x: ",x,"y: ",y)
+    #dbg("width: ",width,"height: ",height,"x: ",x,"y: ",y)
     #window.update()
-    #window.geometry(f"{width}x{height}+{x}+{y}")
-    window.geometry(f"+{x}+{y}")
+    window.geometry(f"{width}x{height}+{x}+{y}")
+    #window.geometry(f"+{x}+{y}")
 
 def quit_program(G):
     logout_shout(G)
     G.logout()
     try:
-        listener_socket.shutdown(socket.SHUT_RDWR)
+        udp_listener_socket.shutdown(socket.SHUT_RDWR)
     except Exception as e:
-        listener_socket.close()
-    server_socket.shutdown(socket.SHUT_RDWR)
+        udp_listener_socket.close()
+    tcp_listener_socket.shutdown(socket.SHUT_RDWR)
     try:
-        listener_thread.join()
-        server_thread.join()
+        udp_listener_thread.join()
+        tcp_listener_thread.join()
     except Exception as e:
-        print("Error closing threads: ",e)
+        dbg("Error closing listener threads: ",e,d=1)
     root.destroy()
     
 root.protocol('WM_DELETE_WINDOW', lambda: quit_program(GG))
@@ -146,102 +163,117 @@ def warning_popup(window, warning_text):
     tk.messagebox.showwarning(title="Warning!", message=warning_text) #, icon=tk.messagebox.WARNING)
     window.wm_attributes('-type', 'normal')
 
+# Inform a peer that I am a server now
+def server_inform(addr):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test:
+        try:
+            test.connect((addr,SERVER_PORT))
+        except Exception as e:
+            return
+        test.sendall("IM_SERVER".encode())
+
+# Check if a peer is a server
+def server_ping(addr):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test:
+        try:
+            dbg('trying to connect to: ',(addr,SERVER_PORT))
+            test.connect((addr,SERVER_PORT))
+        except Exception as e:
+            dbg("Unable to ping server: ",e,d=1)
+            return False
+        m="IS_SERVER"
+        test.sendall(m.encode())
+        reply=test.recv(1024).decode()
+        dbg("How fast?: ",reply)
+        if reply=="YES":
+            return True
+        else:
+            return False
+
+# Refresh list of servers <-- might not be needed if everything runs well. Try a flowchart.
 def server_refresh(G):
-    print("Refreshing: ",G.get_peer_cache())
     servers=G.get_peer_cache().copy()
     for host,addr in servers.items():
-        print("in loop")
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test:
-            try:
-                print('trying to connect to: ',(addr,SERVER_PORT))
-                test.connect((addr,SERVER_PORT))
-            except Exception as e:
-                print("can't connect because : ",e)
-                G.remove_peer(h)
-                continue
-            m="IS_SERVER"
-            test.sendall(m.encode())
-            reply=test.recv(1024).decode()
-            print("reply is server?: ",reply)
-            if reply=="YES":
-                G.update_peer_server_status(host,True)
-            else:
-                G.update_peer_server_status(host,False)
+        G.update_peer_server_status(host,server_ping(addr))
 
 # Split from "server_process" thread
 def server_process(G,conn,addr):
-    print("Entered process")
+    dbg("waiting to receive")
+    #dbg("waiting to receive")
     msg = conn.recv(1024).decode()
+    dbg("received")
     if msg=="IS_SERVER":
         if G.am_i_server():
             conn.sendall("YES".encode())
         else:
             conn.sendall("NO".encode())
+        dbg("sent")
+    elif msg=="IM_SERVER":
+        t=list(G.get_peer_cache().keys())[list(G.get_peer_cache().values()).index(addr[0])]
+        G.update_peer_server_status(t,True)
+        server_display_refresh(G)
+    # [LATER] Main gameloop will most likely be in an elif here... gonna be weird
 
 # Running as thread from the start
-def server_listener(G):
-    #global server_socket
-    print("Listening")
-    server_socket.listen(5)
+def tcp_peer_listener(G):
+    tcp_listener_socket.listen(5)
     while True:
         try:
-            print("Listen found, connecting")
-            new_con, new_addr = server_socket.accept()
-            print("thread opened")
-            # [LATER] Check which type of message comes before opening a thread perhaps.
+            new_con, new_addr = tcp_listener_socket.accept()
+            dbg("spinning thread")
             threading.Thread(target=server_process,args=(G,new_con,new_addr)).start()
-            print("done")
+            # [FIX NEEDED] -> Handle regular queries within this loop itself, so that only one ?
         except Exception as e:
-            print("Server Listener is kill",e)
-            server_socket.close()
+            dbg("TCP Listener is kill: ",e,d=1)
+            tcp_listener_socket.close()
             break
 
 def server_display_refresh(G):
     server_list.delete(0,tk.END)
     j=1
-    print("Refreshing servers: ", G.get_peer_server_list())
+    dbg("Refreshing servers: ", G.get_peer_server_list())
     for i in G.get_peer_server_list():
         server_list.insert(j, i)
         j+=1
 
 # Running as thread from start
-def peer_listener(G):
+def udp_peer_listener(G):
     while True:
         try:
-            data, addr = listener_socket.recvfrom(1024)
-        except OSError:
+            data, addr = udp_listener_socket.recvfrom(1024)
+        except Exception as e:
+            dbg("UDP Listener is kill.",e,d=1)
             break
         d=data.decode()
         if d.startswith(MAGIC):
             rec_user = d[len(MAGIC):]
         else:
             continue
-        # Delete existing IP if any
-        #if addr[0] in G.get_peer_cache() and rec_user=="#@!__EXIT__!@#":
-        #        t=list(G.get_peer_cache().keys())[list(G.get_peer_cache().values()).index(addr[0])]
-        #        G.remove_peer(t)
-        #print("rec: ",rec_user)
-        
+                    
+        # --> RECV (EXIT MESSAGE)
         # Remove peer entry if you get logout shout from peer
         if rec_user=="#@!__EXIT__!@#":
             if addr[0] in G.get_peer_cache().values():
                 t=list(G.get_peer_cache().keys())[list(G.get_peer_cache().values()).index(addr[0])] # get hostname of address from which "logout" came
                 G.remove_peer(t)
-                
+                server_display_refresh(G)
+        # --> RECV (USERNAME UDP PEER SHOUT)
         # Check if peer is already in records, process otherwise
-        elif rec_user not in G.get_peer_cache():
+        elif rec_user not in G.get_peer_cache_UNCLEAN_DO_NOT_USE(): # Using unclean get ONLY HERE, to avoid peer_shout loop
             # I'm logged in
             if G.get_state()=="LOGGED_IN":
-                print("Logged in")
-                peer_shout(G)
+                dbg("Logged in")
                 if rec_user != G.get_username():
-                    print("not same uname, so adding")
+                    dbg("not same uname, so adding")
                     G.add_peer(rec_user,addr[0])
+                else:
+                    G.add_peer(rec_user,"__TEMP__") # Placeholder for duplicate username, will usually be deleted immediately. Avoids peer_shout loop.
+                # <-- SEND (PEER SHOUT)
+                peer_shout(G)
             # I'm not logged in yet
             else:
-                print("not logged in, so adding")
-                G.add_peer(rec_user,addr[0])
-        #server_refresh(G)
+                G.add_peer(rec_user,addr[0]) # server_ping(addr[0]))
+                dbg("not logged in, so adding")
 
 def logout_shout(G):
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as s:
@@ -258,6 +290,7 @@ def peer_shout(G):
         message=MAGIC+G.get_username()
         for i in range(0, 200):
             s.sendto(message.encode(), (MCAST_GROUP,PEER_LISTEN_PORT))
+        dbg("shout done")
 
 # Login function
 def login(event,G):
@@ -299,16 +332,18 @@ def login(event,G):
     # Root will not update and wait here until search_w has been destroyed
     root.wait_window(search_w)
     
-    # After 2 seconds of wait -
+    # After 700ms wait -
     root.wm_attributes('-type', 'normal') # Enables window again
     
     # Check peers to update which are in Server mode right now
+    dbg("Server refresh start")
     server_refresh(G)
-       
+    dbg("Server refresh end")
+        
     # Check whether your username is already taken
     if uname_t.get() in G.get_peer_cache():
-        warning_popup(root,"User already exists!")
         logout(G)
+        warning_popup(root,"User already exists!")
         return
 
     # Login success !
@@ -318,6 +353,8 @@ def login(event,G):
     if not G.get_peer_server_list():
 		# If there's no other server online, set this system to be server
         G.set_server_state(True)
+        for addr in G.get_peer_cache().values():
+            server_inform(addr)
         server_page.pack(fill='both',expand=True)
         center_window(root)
         my_message.focus_set()
@@ -381,27 +418,22 @@ username=tk.StringVar()
 messages=tk.StringVar()
 
 # Network variables
-listener_thread = threading.Thread(target=peer_listener,args=(GG,))
-server_thread = threading.Thread(target=server_listener,args=(GG,))
+udp_listener_thread = threading.Thread(target=udp_peer_listener,args=(GG,))
+tcp_listener_thread = threading.Thread(target=tcp_peer_listener,args=(GG,))
 
 try:
-    listener_socket=socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_listener_socket=socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     mreq = socket.inet_aton(MCAST_GROUP) + socket.inet_aton(MY_IP)
-    listener_socket.setsockopt(socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-    listener_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 0)
-    listener_socket.bind(('',PEER_LISTEN_PORT))
+    udp_listener_socket.setsockopt(socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+    udp_listener_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 0)
+    udp_listener_socket.bind(('',PEER_LISTEN_PORT))
     
-    server_socket=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind((MY_IP,SERVER_PORT))
+    tcp_listener_socket=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    #tcp_listener_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    tcp_listener_socket.bind((MY_IP,SERVER_PORT))
 except Exception as e:
-    print("Error creating sockets: ",e)
+    dbg("Error creating listener sockets: ",e,d=1)
     sys.exit(1)
-
-# Status variables
-isServer = False
-logging_in = False
-logged_in = False
-in_game = False
 
 # 1st Window : Login. Enter username label and textbox (all rooted to login_page frame)
 uname_l = ttk.Label(login_page, text="Enter username", style="M.TLabel")
@@ -465,8 +497,8 @@ logout_b.pack(padx=20, pady=20, side=tk.RIGHT, anchor='nw')
 # Main window loop
 def main():
     # Start threads
-    listener_thread.start()
-    server_thread.start()
+    udp_listener_thread.start()
+    tcp_listener_thread.start()
     # Display login page
     login_page.pack(fill='both',expand=True)
     uname_t.focus_set()    
