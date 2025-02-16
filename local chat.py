@@ -5,7 +5,7 @@ from tkinter import simpledialog
 from tkinter import ttk
 import socket
 import threading
-import select
+import time
 
 # Main window definition, title and dimensions
 root = tk.Tk()
@@ -26,6 +26,7 @@ class globalState:
         self.peerIsServer = {}
         self.gLock = threading.Lock()
         self.tempUname=''
+        self.threadz=True
         
     # Functions to change game state
     def start_login(self,username):
@@ -56,7 +57,20 @@ class globalState:
     def update_peer_server_status(self,hostname,status):
         with self.gLock:
             self.peerIsServer[hostname]=status
+    def start_game(self):
+        with self.gLock:
+            self.STATE="IN_GAME"
+    def exit_game(self):
+        with self.gLock:
+            self.username=''
+            self.STATE="START"
+            self.isServer=False
+            self.threadz=False
+
     # Functions to read game state
+    def get_app_status(self):
+        with self.gLock:
+            return self.threadz
     def am_i_server(self):
         with self.gLock:
             return self.isServer
@@ -89,14 +103,43 @@ class globalState:
 
 GG=globalState()
 
-#class pleaseWait(tk.simpledialog):
-#    def __init__(self, parent, title):
-#        self.message = message
-#        tk.simpledialog.__init__(self, parent, title=title)# text=message)
-#    def body(self, master):
-#        Label(self, text=self.message).pack()
-#    def buttonbox(self):
-#        pass
+class gameState:
+    def __init__(self,area,field):
+        self.goodWords = [] # list of acceptable words.. move file opening here?
+        self.screenWords = {} # list of words on screen
+        self.spawnArea = 100
+        self.screenLimit = 20
+        self.wordCount = 0
+        self.difficulty = 0.5
+        self.screen=area
+        self.textField = field
+        self.textField.bind("<Return>", lambda e: self.word_entered(e) )
+    def spawn_word(self,word):
+        if word in self.screenWords:
+            dbg("duplicate word on screen")
+        if self.wordCount < self.screenLimit:
+            t=self.screen.create_text(self.spawnArea,50,text=word,fill="#FFFFFF",font=("Arial",20))
+            self.spawnArea += 200
+            if self.spawnArea > 1300:
+                self.spawnArea=100
+            self.screenWords[word]=t
+            self.wordCount+=1
+    def word_entered(self,event):
+        # if word in words: # verify if word is a dictionary word
+        word=self.textField.get()
+        self.textField.delete(0,'end')
+        dbg("Enter success")
+        dbg("List: ",self.screenWords)
+        dbg("Word: ",word)
+        if word in self.screenWords:
+            dbg("If success")
+            self.screen.delete(self.screenWords[word])
+            del self.screenWords[word]
+    def update(self):
+        for i in self.screenWords:
+            self.screen.move(self.screenWords[i],0,10)
+    def get_difficulty(self):
+        return self.difficulty
 
 # ----------------------------------------------
 #                   NETWORKING 
@@ -143,12 +186,12 @@ def center_window(window):
 
 def quit_program(G):
     logout_shout(G)
-    G.logout()
-    try:
-        udp_listener_socket.shutdown(socket.SHUT_RDWR)
-    except Exception as e:
-        udp_listener_socket.close()
-    tcp_listener_socket.shutdown(socket.SHUT_RDWR)
+    G.exit_game()
+    #try:
+    #    udp_listener_socket.shutdown(socket.SHUT_RDWR)
+    #except Exception as e:
+    #    udp_listener_socket.close()
+    #tcp_listener_socket.shutdown(socket.SHUT_RDWR)
     try:
         udp_listener_thread.join()
         tcp_listener_thread.join()
@@ -217,12 +260,14 @@ def server_process(G,conn,addr):
 # Running as thread from the start
 def tcp_peer_listener(G):
     tcp_listener_socket.listen(5)
-    while True:
+    while G.get_app_status():
         try:
             new_con, new_addr = tcp_listener_socket.accept()
             dbg("spinning thread")
             threading.Thread(target=server_process,args=(G,new_con,new_addr)).start()
             # [FIX NEEDED] -> Handle regular queries within this loop itself, so that only one ?
+        except TimeoutError:
+            continue
         except Exception as e:
             dbg("TCP Listener is kill: ",e,d=1)
             tcp_listener_socket.close()
@@ -238,9 +283,11 @@ def server_display_refresh(G):
 
 # Running as thread from start
 def udp_peer_listener(G):
-    while True:
+    while G.get_app_status():
         try:
             data, addr = udp_listener_socket.recvfrom(1024)
+        except TimeoutError:
+            continue
         except Exception as e:
             dbg("UDP Listener is kill.",e,d=1)
             break
@@ -304,20 +351,11 @@ def login(event,G):
         warning_popup(root,"User already exists!")
         return
     
-    # Set game state for login
-    G.start_login(uname_t.get())
-    
-    # This is to prevent repeated "Enter" keypresses from Entry widget from calling "login" function multiple times
-    root.focus_set()
-    
-    # [LATER] If there are already servers in cache, show them while searching maybe?
-    
-    # Shout your presence on network
-    peer_shout(G)
-    
-    # Set up popup window to urge player to wait while we search for peers
-    search_w = tk.Toplevel(root)
-    
+    G.start_login(uname_t.get()) # Set game state for login
+    root.focus_set() # This is to prevent repeated "Enter" keypresses from Entry widget from calling "login" function multiple times
+    peer_shout(G) # Shout your presence on network
+
+    search_w = tk.Toplevel(root) # Set up popup window to urge player to wait while we search for peers
     search_w.overrideredirect(True) # Hide titlebar
     tk.Message(search_w, text="Searching for other players...\nPlease wait", anchor='center',padx=20, pady=20).pack()
     center_window(search_w)
@@ -325,10 +363,8 @@ def login(event,G):
     
     # search_w.wait_visibility() # Some shenanigans with how this works with button command but not with direct bind.. weird.. (seems fixed now though)
     search_w.grab_set() # Splash window does not stop tkinter buttons from being clicked without this
-    
     # Completely disables the root window (except movement) until the popup window disappears. Full disable only works on windows, so using this instead.
     root.wm_attributes('-type', 'splash')
-    
     # Root will not update and wait here until search_w has been destroyed
     root.wait_window(search_w)
     
@@ -336,9 +372,7 @@ def login(event,G):
     root.wm_attributes('-type', 'normal') # Enables window again
     
     # Check peers to update which are in Server mode right now
-    dbg("Server refresh start")
     server_refresh(G)
-    dbg("Server refresh end")
         
     # Check whether your username is already taken
     if uname_t.get() in G.get_peer_cache():
@@ -346,9 +380,7 @@ def login(event,G):
         warning_popup(root,"User already exists!")
         return
 
-    # Login success !
-    G.login_success()
-    
+    G.login_success()    
     loggedin_l.configure(text=loggedin_l.cget("text")+G.get_username())
     if not G.get_peer_server_list():
 		# If there's no other server online, set this system to be server
@@ -364,13 +396,13 @@ def login(event,G):
         for i in G.get_peer_server_list():
             server_list.insert(1, i)
         center_window(root)
-        # [LATER] TCP connection to server ?
+        # [LATER] Implement TCP connection to server 
     login_page.pack_forget()
 
 def logout(G):
     server_list.delete(0,tk.END)
     G.logout()
-    logout_shout(G)    
+    logout_shout(G)
     loggedin_l.configure(text="Logged in as: ")
     server_page.pack_forget()
     server_list_page.pack_forget()
@@ -380,20 +412,28 @@ def logout(G):
 
 # [LATER] Will need to revamp with connected peer
 def send_message(event,G):
-    # now I see the problem with not using classes...
-    # ...or do I?
     message_list.configure(state='normal')
     message_list.insert('end',G.get_username()+": "+my_message.get()+'\n')
     message_list.configure(state='disabled')
     my_message.delete(0,'end')
 
-# Create a style, and templates that can be used for elements when using said style
-style = ttk.Style()
-style.configure("M.TLabel", foreground="black", font=('Ariel',25))
-style.configure("M.TLabel", foreground="black", font=('Ariel',15))
-style.configure("M.TEntry", foreground="red") # For some reason Entry font can't be declared outside
-style.configure("M.TButton", font=('Ariel',25))
-style.configure("S.TButton", font=('Ariel',15))
+def game_loop(G,area):
+    GAME=gameState(area,g_text_e)
+    test = ["the","five","boxing","wizards","jump","quickly"]
+    for i in test:
+        GAME.spawn_word(i)
+    while G.get_app_status():
+        dbg(g_text_e.get())
+        #dbg("Game loop",i)
+        GAME.update()
+        time.sleep(0.5)
+
+def test_game(G):
+    server_page.pack_forget()
+    game_page.pack(fill='both',expand=True)
+    g_text_e.focus_set()
+    #center_window(root)
+    threading.Thread(target=game_loop,args=(G,g_canvas)).start()
 
 # tk validation function, to make sure there's no spaces in the "username" field and restrict to 16 characters
 def valuser(newchar, current_string):
@@ -403,6 +443,14 @@ def valuser(newchar, current_string):
         return False
 vcmd = root.register(valuser)
 
+# Create a style, and templates that can be used for elements when using said style
+style = ttk.Style()
+style.configure("M.TLabel", foreground="black", font=('Ariel',25))
+style.configure("M.TLabel", foreground="black", font=('Ariel',15))
+style.configure("M.TEntry", foreground="red") # For some reason Entry font can't be declared outside
+style.configure("M.TButton", font=('Ariel',25))
+style.configure("S.TButton", font=('Ariel',15))
+
 # ----------------------------------------------
 #                   VARIABLES
 # ----------------------------------------------
@@ -411,11 +459,18 @@ vcmd = root.register(valuser)
 login_page = ttk.Frame(root)
 server_page = ttk.Frame(root)
 server_list_page = ttk.Frame(root)
+game_page = ttk.Frame(root)
 
 # Message app variables
 server_cache = {}
 username=tk.StringVar()
 messages=tk.StringVar()
+word_list=[]
+
+with open("words.txt","r") as f:
+    for i in f:
+        word_list.append(i[:-1].lower())
+print(word_list[15121])
 
 # Network variables
 udp_listener_thread = threading.Thread(target=udp_peer_listener,args=(GG,))
@@ -426,9 +481,11 @@ try:
     mreq = socket.inet_aton(MCAST_GROUP) + socket.inet_aton(MY_IP)
     udp_listener_socket.setsockopt(socket.SOL_IP, socket.IP_ADD_MEMBERSHIP, mreq)
     udp_listener_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 0)
+    udp_listener_socket.settimeout(0.1)
     udp_listener_socket.bind(('',PEER_LISTEN_PORT))
     
     tcp_listener_socket=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_listener_socket.settimeout(0.1)
     #tcp_listener_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     tcp_listener_socket.bind((MY_IP,SERVER_PORT))
 except Exception as e:
@@ -452,35 +509,29 @@ enter_b.pack(pady = 20, padx=20, side=tk.LEFT)
 quit_b.pack(pady = 20, padx = 20, side=tk.RIGHT)
 
 # 2nd Window  : Server Host. If there are no other users online, you will become the host for the chatroom.
+bottom_f = ttk.Frame(server_page)
 loggedin_l = ttk.Label(server_page, text="Logged in as: ", style="M.TLabel")
 message_list = tk.Text(server_page, bg='white')
 message_list.configure(state='disabled')
-message_l = ttk.Label(server_page, text="Enter message: ", style="S.TLabel")
-my_message = ttk.Entry(server_page, font=('Ariel',15))
-send_b = ttk.Button(server_page, text="Send", style="S.TButton", command=lambda e=None,g=GG: send_message(e,g))
 logout_b = ttk.Button(server_page, text="Logout", style="S.TButton", command=lambda: logout(GG))
+join_b = ttk.Button(server_page, text="Game", style="S.TButton", command=lambda: test_game(GG)) # temp for testing
+message_l = ttk.Label(bottom_f, text="Enter message: ", style="M.TLabel")
+my_message = ttk.Entry(bottom_f, font=('Ariel',15))
+send_b = ttk.Button(bottom_f, text="Send", style="S.TButton", command=lambda e=None,g=GG: send_message(e,g))
 
 # Binding Enter key to allow sending messages
 my_message.bind("<Return>",lambda e,g=GG: send_message(e,g))
 
-# Pack Server page items (grid/pack)
-# Grid doesn't do autoscaling, so using pack instead.
-"""
-loggedin_l.grid(row=0, column=0, sticky="news", padx=10, pady=10)
-logout_b.grid(row=0, column=2, sticky="ne", padx=10, pady=10)#, columnspan=2)
-message_list.grid(row=1, column=0, padx=10, sticky="new",columnspan=10)
-message_l.grid(row=2, column=0, sticky="news", padx=10, pady=10)
-my_message.grid(row=2, column=1, sticky="news", padx=10, pady=10)
-send_b.grid(row=2, column=2, columnspan=2, padx=10, pady=10)
-"""
-#"""
-loggedin_l.pack(padx=10, pady=10, side=tk.LEFT, anchor='nw')
-logout_b.pack(pady = 20, padx=20, side=tk.RIGHT, anchor='ne')
-message_list.pack(padx=25, pady=25, side=tk.TOP, fill='x')
-message_l.pack(pady = 20, padx=20, side=tk.LEFT, anchor='w')
-my_message.pack(pady = 20, padx=20, side=tk.LEFT, fill='x')
+bottom_f.pack(side=tk.BOTTOM,fill='x')
+loggedin_l.pack(padx=10, pady=10, side=tk.LEFT, anchor='n')
+message_list.pack(padx=25, pady=25, side=tk.LEFT, fill='both')
+logout_b.pack(pady = 20, padx=20, side=tk.TOP)
+join_b.pack(pady = 20, padx=20, side=tk.TOP)
+
+message_l.pack(pady = 20, padx=20, side=tk.LEFT, anchor='e')
 send_b.pack(pady = 20, padx=20, side=tk.RIGHT)
-#"""
+my_message.pack(pady = 20, padx=20, side=tk.RIGHT, expand=True, fill='x')
+
 
 # 3rd Window : Server List. If there are other users online, display list.
 list_l = ttk.Label(server_list_page, text="List of users online: ", style="M.TLabel")
@@ -488,11 +539,22 @@ server_list = tk.Listbox(server_list_page, bg='white')
 join_b = ttk.Button(server_list_page, text="Join", style="S.TButton")
 logout_b = ttk.Button(server_list_page, text="Logout", style="S.TButton", command=lambda: logout(GG))
 
-# Pack Server List page items
 list_l.pack(padx=20, pady=20, side=tk.TOP, anchor='nw')
 server_list.pack(padx=10, pady=10, side=tk.TOP, fill='x')
 join_b.pack(padx=20, pady=20, side=tk.LEFT, anchor='nw')
 logout_b.pack(padx=20, pady=20, side=tk.RIGHT, anchor='nw')
+
+# 4th Test Window : Actual game (testing, iterate)
+g_canvas = tk.Canvas(game_page, bg="#000000")
+g_text_f = ttk.Frame(game_page)
+g_text_f.pack(side=tk.BOTTOM,fill='x')
+g_text_l = ttk.Label(g_text_f, text="Destroy the words by typing them! : ", style="M.TLabel")
+g_text_e = ttk.Entry(g_text_f, font=('Ariel',15))
+g_text_e.insert(0,'sample')
+
+g_text_l.pack(padx=10, pady=20, side=tk.LEFT)
+g_text_e.pack(padx=10, pady=20, side=tk.LEFT,fill='x',expand=True)
+g_canvas.pack(fill='both',expand=True)
 
 # Main window loop
 def main():

@@ -3,22 +3,25 @@ OUTLINE | WIP Notes
 
 Progress:
 1. Start with entering a username in Login window
-    a. Implement server discovery.
-        i. Popup message urging player to wait 2 seconds set up.
-        ii. Set up screen to wait 1.5 seconds while it searches for peers.
-        iii. System will be set to client if no other peer working as server.
-        iv. Screen will move to server selection frame if there is already a server in the network.
-        v. If username already exists, a warning will popup, exit login function & clear username field.
-        vi. Removed multicast loop to avoid duplicate username shenanigans, but now requires at least 2 devices to test.
-        vii. Fixed global variable changes not reflecting in looping thread with lock and global keyword.
-        viii. Encountered peer_shout loop when facing duplicate username, implemented dirty fix.
-    b. Major update : Converted Global state into state machine class, passing the object in order to change it, with locks on every operation
-    c. Dict to track server status for peers added to Game State. Can use this to populate "Join" page.
-    d. Peer server status will now be refreshed once login is completed.
-    e. Peers with server roles logging out and logging back in updates the "client page" list immediately.
+2. Implement server discovery.
+    a. Popup message urging player to wait 2 seconds set up.
+    b. Set up screen to wait 1.5 seconds while it searches for peers.
+    c. System will be set to client if no other peer working as server.
+    d. Screen will move to server selection frame if there is already a server in the network.
+    e. If username already exists, a warning will popup, exit login function & clear username field.
+    f. Removed multicast loop to avoid duplicate username shenanigans, but now requires at least 2 devices to test.
+    g. Fixed global variable changes not reflecting in looping thread with lock and global keyword.
+    h. Encountered peer_shout loop when facing duplicate username, implemented dirty fix.
+3. Major update : Converted Global state into state machine class, passing the object in order to change it, with locks on every operation
+4. Dict to track server status for peers added to Game State. Can use this to populate "Join" page.
+5. Peer server status will now be refreshed once login is completed.
+6. Peers with server roles logging out and logging back in updates the "client page" list immediately.
+7. Versioning with tags set up in git.
+8. Added a small timeout to listener threads, they should now shutdown gracefully. Tests with 2nd laptop show no noticeable difference.
+9. Skeletal main game loop framework implemented. Word spawning, typing, checking, deletion if word matches, working well.
 
-CURRENTLY WORKING ON    : Set up proper versioning with version numbers (tags) in git.
-                          Make a test thread where you can raise an exception from one thread into another, to see if there's a good way to gracefully close listeners.
+CURRENTLY WORKING ON    : Joining chatroom via TCP, sending and receiving more complex objects than strings. Check whether single socket can send and receive at the same time.
+                          Rename main program both locally and on main repository.
 
 Useful
 ======
