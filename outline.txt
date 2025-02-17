@@ -21,7 +21,11 @@ Progress:
 9. Skeletal main game loop framework implemented. Word spawning, typing, checking, deletion if word matches, working well.
 
 CURRENTLY WORKING ON    : Joining chatroom via TCP, sending and receiving more complex objects than strings. Check whether single socket can send and receive at the same time.
-                          Rename main program both locally and on main repository.
+                          Fix item cget error for joining server among list
+                          Test socket & other functionalities with 2nd laptop.
+                          >! peer connection socket being garbage collected, even though it has been referenced in class
+                          Fixed, now can chat between people.
+                          Need more graceful exit of threads, server display refresh happening on exit for some reason
 
 Useful
 ======
