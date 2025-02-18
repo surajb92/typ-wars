@@ -28,10 +28,7 @@ class globalState:
         self.gLock = threading.Lock()
         self.tempUname=''
         self.threadz=True
-        #self.connectedPeer='' # Will add this dynamically and see
-        self.sendWaiter=threading.Event()
-        self.sendBuffer=''
-        #self.GAME = gameState()
+        #self.GAME = gameState() # dynamic
 
     # Display and send messages you type
     def send_message(self,msg):
@@ -40,8 +37,8 @@ class globalState:
             txt = self.userName+": "+msg+'\n'
             display_message(txt)
             if hasattr(self,"connectedPeer"):
-                self.sendBuffer="MSG|"+msg
-                self.sendWaiter.set()
+                self.send_to_peer("MSG|"+msg)
+                dbg("send_message sending: ",msg)
     
     # Display messages sent by your peer
     def recv_message(self,msg):
@@ -83,10 +80,6 @@ class globalState:
             self.STATE="IN_GAME"
     def exit_game(self):
         with self.gLock:
-            if hasattr(self, "connectedPeer"):
-                disconnect(self)
-            self.username=''
-            self.STATE="START"
             self.isServer=False
             self.threadz=False
     def peer_connect(self,peer,conn):
@@ -94,18 +87,30 @@ class globalState:
             host_peer_label.configure(text="Connected: "+peer)
             self.connectedPeer=peer
             self.peerSocket=conn
-            #self.peerSocket.settimeout(0.1)
-            self.peerSocket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 5)
-        threading.Thread(target=game_receive_loop,args=(self,)).start()
-        threading.Thread(target=game_send_loop,args=(self,)).start()
-    def peer_disconnect(self):
-        with self.gLock:
-            host_peer_label.configure(text="No player connected.")
-            delattr(self,"connectedPeer")
-            self.peerSocket.shutdown(socket.SHUT_RDWR)
-            self.peerSocket.close()
-            delattr(self,"peerSocket")
-
+            self.sendWaiter=threading.Event()
+            self.sendBuffer=''
+            self.peerSocket.settimeout(0.1)
+            #self.peerSocket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 5)
+            self.rcv_loop = threading.Thread(target=game_receive_loop,args=(self,))
+            self.send_loop = threading.Thread(target=game_send_loop,args=(self,))
+            self.disconWaiter = threading.Event()
+            self.dcloop = threading.Thread(target=peer_disconnect_handler,args=(self,))
+        self.rcv_loop.start()
+        self.send_loop.start()
+        self.dcloop.start()
+    def peer_disconnect(self,from_peer=False):
+        if from_peer:
+            self.disconnect_message_from_peer=True
+        self.disconWaiter.set()
+        host_peer_label.configure(text="No player connected.")
+        if not self.isServer and self.threadz: # Change window if exit button not pressed
+            server_page.pack_forget()
+            server_list_page.pack(expand=True,fill='both')
+            center_window(root)
+    def send_to_peer(self,msg): # Using gLock here will lead to deadlock
+        self.sendBuffer=msg
+        self.sendWaiter.set()
+        dbg("send_to_peer sending: ",msg)
     # Functions to read game state
     def get_app_status(self):
         with self.gLock:
@@ -248,16 +253,16 @@ def server_display_refresh(G):
 def quit_program(G):
     logout_shout(G)
     G.exit_game()
+    if hasattr(G,"connectedPeer"):
+        G.peer_disconnect()
+        G.dcloop.join()
     #try:
     #    udp_listener_socket.shutdown(socket.SHUT_RDWR)
     #except Exception as e:
     #    udp_listener_socket.close()
     #tcp_listener_socket.shutdown(socket.SHUT_RDWR)
-    try:
-        udp_listener_thread.join()
-        tcp_listener_thread.join()
-    except Exception as e:
-        dbg("Error closing listener threads: ",e,d=1)
+    udp_listener_thread.join()
+    tcp_listener_thread.join()
     root.destroy()
 
 # Force use above function when main window is closed in any form
@@ -356,33 +361,10 @@ def join_host(event,G,widget):
             server_list_page.pack_forget()
             server_page.pack(fill='both',expand=True)
             center_window(root)
-            # Set up TCP threads for sending and receiving (as client) here
-            #ggame.settimeout(0.1)
-            #threading.Thread(target=game_receive_loop,args=(G,ggame,host)).start()
-            #threading.Thread(target=game_send_loop,args=(G,ggame,host)).start()
         else:
             dbg("Host not a server.",d=1)
             return
         #"""
-
-# Send disconnect message to current peer
-def disconnect(G):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test:
-        try:
-            dbg('Trying to disconnect from: ',(addr,SERVER_PORT))
-            test.connect((addr,GAME_PORT))
-        except Exception as e:
-            dbg("Unable to ping server: ",e,d=1)
-            return
-        m=MAGIC+"__DISCONNECT__"
-        if not G.get_server():
-            server_page.pack_forget()
-            server_list_page.pack(expand=True,fill='both')
-            center_window(root)
-        else:
-            pass
-        test.sendall(m.encode())
-        G.peer_disconnect()
 
 # ----------------------------------------------
 #           SERVER NETWORKING FUNCTIONS 
@@ -483,63 +465,93 @@ def server_process(G,conn,addr):
                     return
                 dbg("Connected! Starting threads..")
                 G.peer_connect(host,ggame)
-                #ggame.settimeout(0.1)
-                #threading.Thread(target=game_receive_loop,args=(G,ggame,host)).start()
-                #threading.Thread(target=game_send_loop,args=(G,ggame,host)).start()
-                #time.sleep(0.1)
         else:
             conn.sendall((MAGIC+"NO").decode())
-    elif msg=="DISCONNECT":
-        if G.get_connected_peer():
-            G.peer_disconnect()
 
 # ----------------------------------------------
 #         CHAT & GAME NETWORK FUNCTIONS 
 # ----------------------------------------------
 
 def game_receive_loop(G):
-    dbg("GAMELOOP: Waiting to receive from ",G.get_connected_peer(),G.peerSocket)
-    #G.sendBuffer="HALLO HALLO BAU BAU"
-    #G.sendWaiter.set()
-    while G.get_connected_peer():
+    dbg("GAMELOOP: Waiting to receive from ",G.connectedPeer,G.peerSocket)
+    while hasattr(G,"connectedPeer"):
         try:
-            m = G.peerSocket.recv(1024)
+            m = G.peerSocket.recv(1024).decode()
         except TimeoutError:
             continue
         except Exception as e:
             dbg("Game receive loop failed: ",e,d=1)
             dbg("Socket: ",G.peerSocket)
             G.peer_disconnect()
-            break
+            return
         # Process message
-        msg=m.decode()
-        if msg.startswith(MAGIC):
-            msg=msg[len(MAGIC):]
+        if m.startswith(MAGIC):
+            msg=m[len(MAGIC):]
         else:
             continue
         dbg("Message received!: ",msg)
         if msg.startswith("MSG|"):
             G.recv_message(msg[4:])
+        elif msg.startswith("GAME|"):
+            pass
+            # ^ add code for game word exchange here
+        elif msg=="__DISCONNECT__":
+            G.peer_disconnect()
+            return
 
 def game_send_loop(G):
-    while G.get_connected_peer():
+    while hasattr(G,"sendWaiter"):
         dbg("GAMELOOP: Waiting for SEND event")
         G.sendWaiter.wait()
-        m = MAGIC+G.sendBuffer
+        if not hasattr(G,"connectedPeer"):
+            break
+        msg=G.sendBuffer
+        G.sendBuffer=''
+        G.sendWaiter.clear()
+        m = MAGIC+msg
         try:
             dbg("GAMELOOP: Got SEND event! Sending: ",m)
             G.peerSocket.sendall(m.encode())
-        except TimeoutError:
-            continue
         except Exception as e:
             dbg("Game send loop failed: ",e,d=1)
-            G.peer_disconnect()
-            break
-        G.sendWaiter.clear()
-        if (G.sendBuffer=="__DISCONNECT__"):
-            G.sendBuffer=''
-            break
-        G.sendBuffer=''
+            G.peer_disconnect(True)
+            return
+        if msg=="__DISCONNECT__":
+            return
+    #G.rcv_loop.join()
+    
+def peer_disconnect_handler(self):
+    dbg("Within discon function: ",self.disconWaiter)
+    self.disconWaiter.wait() # Flag to set for disconnection
+    # ~ while not self.disconWaiter.is_set():
+        # ~ print(self.disconWaiter)
+        # ~ pass
+    with self.gLock:
+        dbg("Disconnection starting...")
+        if hasattr(self,"disconnect_message_from_peer"): # If disconnect message came from peer
+            self.rcv_loop.join()
+            dbg("DC from peer: Recv thread joined!")
+            delattr(self,"connectedPeer")
+            self.sendWaiter.set()
+            self.send_loop.join()
+            dbg("DC from peer : Send thread joined!")
+            delattr(self,"disconnect_message_from_peer")
+        else:                                       # If you are sending the disconnect message
+            self.send_to_peer("__DISCONNECT__")
+            self.send_loop.join()
+            dbg("DC from me : Recv thread joined!")
+            delattr(self,"connectedPeer")
+            self.rcv_loop.join()
+            dbg("DC from me : Send thread joined!")
+        self.peerSocket.close()
+        dbg("socket closed")
+        delattr(self,"peerSocket")
+        delattr(self,"sendWaiter")
+        delattr(self,"sendBuffer")
+        delattr(self,"rcv_loop")
+        delattr(self,"send_loop")
+        delattr(self,"disconWaiter")
+        dbg("attributes nuked")
 
 # ----------------------------------------------
 #               GAME FUNCTIONS 
@@ -632,6 +644,7 @@ def logout(G):
     G.logout()
     logout_shout(G)
     host_loggedin_label.configure(text="Logged in as: ")
+    display_message("",True)
     server_page.pack_forget()
     server_list_page.pack_forget()
     login_page.pack(fill='both',expand=True)
@@ -639,9 +652,12 @@ def logout(G):
     login_uname_entry.focus_set()
 
 # Display message coming from state machine handler on the chat display window
-def display_message(text):
+def display_message(text,clear=False):
     host_chat_display.configure(state='normal')
-    host_chat_display.insert('end',text)
+    if clear:
+        host_chat_display.delete('1.0', tk.END)
+    else:
+        host_chat_display.insert('end',text)
     host_chat_display.configure(state='disabled')
 
 # tk validation function, to make sure there's no spaces in the "username" field and restrict to 16 characters
