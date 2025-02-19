@@ -22,8 +22,13 @@ Progress:
 10. Text communication in lobby working. Send and receive gameloops in 2 different threads.
 11. Peer disconnection handler set up to gracefully exit peer connectivity threads.
 12. Disconnect call added to logout function.
+13. "Ready" checkbox set up clientside to indicate client readiness to start.
+14. Start button will appear serverside when client is ready (and will disappear if client unchecks the box).
+15. Cleaned up a few unnecessary locks to avoid deadlock (might need to revisit for QoL but fine for now)
 
-CURRENTLY WORKING ON    : Clean up UI, Ready checkbox, skeletal game with 2 players.
+CURRENTLY WORKING ON    : Expand on game system, dictionary checking, auto spawn, basically set up enough to play singleplayer (add the feature later maybe).
+                          Implement sending and receiving words etc.
+                          Skeletal game with 2 players.
 
 Useful
 ======

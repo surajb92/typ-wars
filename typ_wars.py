@@ -8,6 +8,16 @@ import threading
 from threading import Event
 import time
 
+# Small section to get screen dimensions
+rope = tk.Tk()
+rope.update_idletasks()
+rope.attributes('-fullscreen', True)
+rope.state('iconic')
+SCREEN_SIZE = rope.winfo_geometry()
+screen_height = rope.winfo_height()
+screen_width = rope.winfo_width()
+rope.destroy()
+
 # Main window definition, title and dimensions
 root = tk.Tk()
 root.title("Typ Wars")
@@ -26,34 +36,41 @@ class globalState:
         self.peerCache = {}
         self.peerIsServer = {}
         self.gLock = threading.Lock()
-        self.tempUname=''
         self.threadz=True
+        self.readySignal=tk.BooleanVar()
+        #self.readySignal.set(False)
         #self.GAME = gameState() # dynamic
 
     # Display and send messages you type
-    def send_message(self,msg):
-        with self.gLock:
-            host_my_message.delete(0,'end')
+    def send_message(self,msg,signal=False):
+        host_my_message.delete(0,'end')
+        if signal:                              # Not a chat message, but a system message
+            txt = msg+'\n'
+        else:
             txt = self.userName+": "+msg+'\n'
-            display_message(txt)
-            if hasattr(self,"connectedPeer"):
+        display_message(txt)
+        if hasattr(self,"connectedPeer"):
+            if signal:
+                self.send_to_peer("SIG|"+msg)
+            else:
                 self.send_to_peer("MSG|"+msg)
-    
+
     # Display messages sent by your peer
-    def recv_message(self,msg):
-        with self.gLock:
+    def recv_message(self,msg,signal=False):
+        if signal:
+            txt = msg+'\n'
+        else:
             txt = self.connectedPeer +": "+msg+'\n'
-            display_message(txt)
+        display_message(txt)
 
     # Functions to change game state
     def start_login(self,username):
         with self.gLock:
-            self.STATE="LOGGING_IN"
             self.userName=username
     def login_success(self):
         with self.gLock:
             self.STATE="LOGGED_IN"
-    def logout(self):
+    def logout(self):   
         with self.gLock:
             self.username=''
             self.STATE="START"
@@ -75,15 +92,21 @@ class globalState:
     def update_peer_server_status(self,hostname,status):
         with self.gLock:
             self.peerIsServer[hostname]=status
-    def start_game(self):
+    def start_game(self,area,game_text_entry):
         with self.gLock:
             self.STATE="IN_GAME"
+            self.GAME=gameState(area,game_text_entry)
     def exit_game(self):
+        with self.gLock:
+            self.STATE="LOGGED_IN"
+            delattr(self,"GAME")
+    def exit_app(self):
         with self.gLock:
             self.threadz=False
     def peer_connect(self,peer,conn):
+        host_peer_label.configure(text="Connected: "+peer)
+        host_disconnect_button.pack(pady = 20, padx=20, side=tk.TOP)
         with self.gLock:
-            host_peer_label.configure(text="Connected: "+peer)
             self.connectedPeer=peer
             self.peerSocket=conn
             self.sendWaiter=threading.Event()
@@ -91,22 +114,54 @@ class globalState:
             self.peerSocket.settimeout(0.1)
             #self.peerSocket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 5)
             self.disconWaiter = threading.Event()
+            self.readySignal.set(False)
             self.rcv_loop = threading.Thread(target=game_receive_loop,args=(self,))
             self.send_loop = threading.Thread(target=game_send_loop,args=(self,))
             self.dcloop = threading.Thread(target=peer_disconnect_handler,args=(self,))
+        if not self.isServer:
+            host_ready_button.pack(pady = 20, padx=20, side=tk.BOTTOM)
         self.rcv_loop.start()
         self.send_loop.start()
         self.dcloop.start()
+        if self.isServer:
+            self.send_message("[ "+self.connectedPeer+" has joined ]",True)
     def peer_disconnect(self,from_peer=False):
-        self.dc_from_peer=from_peer
+        self.dc_from_peer=from_peer                         # Do not delete, required by peer_disconnect_handler
+        if self.isServer:
+            if from_peer:
+                display_message("[ "+self.connectedPeer+" has left ]\n")
+            else:
+                display_message("[ "+self.connectedPeer+" has been kicked ]\n")
+        else:
+            display_message("",True)
         self.disconWaiter.set()
+        host_ready_button.pack_forget()
+        host_disconnect_button.pack_forget()
+        host_start_button.pack_forget()
         host_peer_label.configure(text="No player connected.")
-        if not self.isServer and self.STATE!="START": # Change window for normal disconnect, i.e. not logout or exit
+        if not self.isServer and self.STATE!="START":   # Change window for disconnect as client, i.e. not logout or exit
             server_page.pack_forget()
-            warning_popup("Disconnected!")
+            if from_peer:
+                warning_popup(root, "You have been kicked !")
             server_list_page.pack(expand=True,fill='both')
             center_window(root)
-    def send_to_peer(self,msg): # Using gLock here will lead to deadlock
+    def ready_toggle(self,from_peer=False):
+        if from_peer:                               # Only if you are server
+            self.readySignal.set(not self.readySignal.get())
+            if self.readySignal.get():
+                host_start_button.pack(pady = 20, padx=20, side=tk.BOTTOM)
+            else:
+                host_start_button.pack_forget()
+        if not from_peer:
+            self.sendBuffer="__READY__"
+            self.sendWaiter.set()
+            while self.sendWaiter.is_set():              # Wait until ready signal is sent
+                pass
+            if self.readySignal.get():
+                self.send_message("[ "+self.userName+" is Ready to Play! ]",True)
+            else:
+                self.send_message("[ "+self.userName+" is not Ready.. ]",True)
+    def send_to_peer(self,msg):                         # Using gLock here will lead to deadlock
         self.sendBuffer=msg
         self.sendWaiter.set()
     # Functions to read game state
@@ -153,26 +208,25 @@ GG=globalState()
 
 class gameState:
     def __init__(self,area,field,button=None):
-        self.started = False
         self.goodWords = [] # list of acceptable words.. move file opening here?
         self.screenWords = {} # list of words on screen
-        self.spawnArea = 100
+        self.h_tick = screen_height/100
+        self.spawnArea = screen_width*(2/3)
+        self.w_tick = 50
         self.screenLimit = 20
         self.wordCount = 0
         self.difficulty = 0.5
         self.screen=area
         self.textField = field
         self.textField.bind("<Return>", lambda e: self.word_entered(e) )
-    def game_start(self):
-        self.started=True
     def spawn_word(self,word):
         if word in self.screenWords:
             dbg("duplicate word on screen")
         if self.wordCount < self.screenLimit:
-            t=self.screen.create_text(self.spawnArea,50,text=word,fill="#FFFFFF",font=("Arial",20))
-            self.spawnArea += 200
-            if self.spawnArea > 1300:
-                self.spawnArea=100
+            t=self.screen.create_text(self.w_tick,50,text=word,fill="#FFFFFF",font=("Arial",20))
+            self.w_tick += (self.spawnArea/6)
+            if self.w_tick > self.spawnArea:
+                self.w_tick=50
             self.screenWords[word]=t
             self.wordCount+=1
     def word_entered(self,event):
@@ -188,11 +242,9 @@ class gameState:
             del self.screenWords[word]
     def update(self):
         for i in self.screenWords:
-            self.screen.move(self.screenWords[i],0,10)
+            self.screen.move(self.screenWords[i],0,self.h_tick)
     def get_difficulty(self):
         return self.difficulty
-    def has_started(self):
-        return self.started
 
 # ----------------------------------------------
 #               NETWORKING CONSTANTS
@@ -229,8 +281,6 @@ def center_window(window):
     window.update()
     width = window.winfo_reqwidth()
     height = window.winfo_reqheight()
-    screen_width = window.winfo_screenwidth()
-    screen_height = window.winfo_screenheight()
     x = (screen_width - width) // 2
     y = (screen_height - height) // 2
     #window.update()
@@ -247,17 +297,11 @@ def server_display_refresh(G):
 
 # Clean up threads etc. and make a graceful exit
 def quit_program(G):
+    if G.STATE == "IN_GAME":
+        G.exit_game()
     logout_shout(G)
     G.logout()
-    #if hasattr(G,"connectedPeer"):
-    #    G.peer_disconnect()
-    #    G.dcloop.join()
-    #try:
-    #    udp_listener_socket.shutdown(socket.SHUT_RDWR)
-    #except Exception as e:
-    #    udp_listener_socket.close()
-    #tcp_listener_socket.shutdown(socket.SHUT_RDWR)
-    G.exit_game()
+    G.exit_app()
     udp_listener_thread.join()
     tcp_listener_thread.join()
     root.destroy()
@@ -387,17 +431,27 @@ def udp_peer_listener(G):
         # --> RECV (USERNAME UDP PEER SHOUT)
         # Check if peer is already in records, process otherwise
         elif rec_user not in G.get_peer_cache_UNCLEAN_DO_NOT_USE(): # Using unclean get ONLY HERE, to avoid peer_shout loop
-            # I'm logged in
-            if G.get_state()=="LOGGED_IN":
-                if rec_user != G.get_username():
-                    G.add_peer(rec_user,addr[0])
+            if G.get_state()=="START":                              # If I haven't logged in, add the address
+                G.add_peer(rec_user,addr[0])
+            else:
+                if rec_user == G.get_username():                    # Placeholder for duplicate username, will usually be deleted immediately.
+                    G.add_peer(rec_user,"__TEMP__")                 # Avoids peer_shout loop.
                 else:
-                    G.add_peer(rec_user,"__TEMP__") # Placeholder for duplicate username, will usually be deleted immediately. Avoids peer_shout loop.
+                    G.add_peer(rec_user,addr[0])
                 # <-- SEND (PEER SHOUT)
                 peer_shout(G)
-            # I'm not logged in yet
-            else:
-                G.add_peer(rec_user,addr[0]) # server_ping(addr[0]))
+                
+
+            # ~ if G.get_state()=="LOGGED_IN":
+                # ~ if rec_user != G.get_username():
+                    # ~ G.add_peer(rec_user,addr[0])
+                # ~ else:
+                    # ~ G.add_peer(rec_user,"__TEMP__") # Placeholder for duplicate username, will usually be deleted immediately. Avoids peer_shout loop.
+                # ~ # <-- SEND (PEER SHOUT)
+                # ~ peer_shout(G)
+            # ~ # I'm not logged in yet
+            # ~ else:
+                # ~ G.add_peer(rec_user,addr[0]) # server_ping(addr[0]))
 
 # Running as thread from the start
 def tcp_peer_listener(G):
@@ -467,11 +521,15 @@ def game_receive_loop(G):
             continue
         if msg.startswith("MSG|"):
             G.recv_message(msg[4:])
+        elif msg.startswith("SIG|"):
+            G.recv_message(msg[4:],True)
+        elif msg.startswith("__READY__"):
+            G.ready_toggle(True)
         elif msg.startswith("GAME|"):
             pass
             # ^ [LATER] add code for game word exchange here
         elif msg=="__DISCONNECT__":
-            G.peer_disconnect()
+            G.peer_disconnect(True)
             return
 
 def game_send_loop(G):
@@ -494,7 +552,7 @@ def game_send_loop(G):
     #G.rcv_loop.join()
     
 def peer_disconnect_handler(self):
-    self.disconWaiter.wait()                        # Flag to set for disconnection
+    self.disconWaiter.wait()                        # Flag to set for when you want to disconnected, will wait here
     with self.gLock:
         if self.dc_from_peer:                       # If disconnect message came from peer
             self.rcv_loop.join()
@@ -520,6 +578,15 @@ def peer_disconnect_handler(self):
 # ----------------------------------------------
 
 def game_loop(G,area):
+    G.start_game(area,game_text_entry)
+    test = ["the","five","boxing","wizards","jump","quickly"]
+    for i in test:
+        G.GAME.spawn_word(i)
+    while G.STATE=="IN_GAME":
+        G.GAME.update()
+        time.sleep(0.5)
+
+def test_loop(G,area):
     GAME=gameState(area,game_text_entry)
     test = ["the","five","boxing","wizards","jump","quickly"]
     for i in test:
@@ -531,8 +598,8 @@ def game_loop(G,area):
 def test_game(G):
     server_page.pack_forget()
     game_page.pack(fill='both',expand=True)
+    center_window(root)
     game_text_entry.focus_set()
-    #center_window(root)
     threading.Thread(target=game_loop,args=(G,game_canvas)).start()
 
 # ----------------------------------------------
@@ -587,14 +654,16 @@ def login(event,G):
         G.set_server_state(True)
         for addr in G.get_peer_cache().values():
             server_inform(addr)
+        host_disconnect_button.pack(pady = 20, padx=20, side=tk.TOP)
         server_page.pack(fill='both',expand=True)
         center_window(root)
+        host_disconnect_button.pack_forget()
         host_my_message.focus_set()
     else:
         G.set_server_state(False)
-        server_list_page.pack(fill='both',expand=True)
         for i in G.get_peer_server_list():
             join_server_list.insert(1, i)
+        server_list_page.pack(fill='both',expand=True)
         center_window(root)
         # [LATER] Implement TCP connection to server 
     login_page.pack_forget()
@@ -657,6 +726,21 @@ style.configure("M.TLabel", foreground="black", font=('Ariel',15))
 style.configure("M.TEntry", foreground="red") # For some reason Entry font can't be declared outside
 style.configure("M.TButton", font=('Ariel',25))
 style.configure("S.TButton", font=('Ariel',15))
+style.configure("S.TCheckbutton", font=('Ariel',15))#, indicatorbackground="white", indicatorforeground="green")
+img_unticked_box = tk.PhotoImage(file="0.png")
+img_ticked_box = tk.PhotoImage(file="1.png")
+style.element_create("tickbox", "image", img_unticked_box, ("selected", img_ticked_box))
+# replace the checkbutton indicator with the custom tickbox in the Checkbutton's layout
+style.layout(
+    "TCheckbutton", 
+    [('Checkbutton.padding',
+      {'sticky': 'nswe',
+       'children': [('Checkbutton.tickbox', {'side': 'left', 'sticky':     ''}),
+    ('Checkbutton.focus',
+         {'side': 'left',
+          'sticky': 'w',
+      'children': [('Checkbutton.label', {'sticky': 'nswe'})]})]})]
+)
 
 # Word file
 with open("words.txt","r") as f:
@@ -708,9 +792,13 @@ host_loggedin_label = ttk.Label(server_page, text="Logged in as: ", style="M.TLa
 host_peer_label = ttk.Label(server_page, text="No player connected.", style="M.TLabel")
 host_chat_display = tk.Text(server_page, bg='white')
 host_chat_display.configure(state='disabled')
-host_logout_button = ttk.Button(server_page, text="Logout", style="S.TButton", command=lambda: logout(GG))
-host_disconnect_button = ttk.Button(server_page, text="Disconnect", style="S.TButton", command=GG.peer_disconnect) # temp for testing
-TEST_GAME = ttk.Button(server_page, text="Game", style="S.TButton", command=lambda: test_game(GG)) # temp for testing
+host_logout_button = ttk.Button(server_page, text="LOGOUT", style="S.TButton", command=lambda: logout(GG))
+
+host_disconnect_button = ttk.Button(server_page, text="DISCONNECT", style="S.TButton", command=GG.peer_disconnect)
+host_ready_button = ttk.Checkbutton(server_page, text="READY", style="S.TCheckbutton", command=GG.ready_toggle, variable=GG.readySignal)
+host_start_button = ttk.Button(server_page, text="START", style="S.TButton")
+GTEST_BUTTON = ttk.Button(server_page, text="GAME", style="S.TButton", command=lambda: test_game(GG)) # temp for testing
+
 host_message_label = ttk.Label(host_bottom_frame, text="Enter message: ", style="M.TLabel")
 host_my_message = ttk.Entry(host_bottom_frame, font=('Ariel',15))
 host_send_button = ttk.Button(host_bottom_frame, text="Send", style="S.TButton", command=lambda e=None,G=GG,widget=host_my_message : msg_proxy(e,G,widget))
@@ -723,7 +811,11 @@ host_loggedin_label.pack(padx=10, pady=10, side=tk.TOP)
 host_peer_label.pack(padx=10, pady=10, side=tk.TOP)
 host_chat_display.pack(padx=25, pady=25, side=tk.LEFT, expand=True, fill='both')
 host_logout_button.pack(pady = 20, padx=20, side=tk.TOP)
-TEST_GAME.pack(pady = 20, padx=20, side=tk.TOP)
+#host_disconnect_button.pack(pady = 20, padx=20, side=tk.TOP)
+
+#host_ready_button.pack(pady = 20, padx=20, side=tk.TOP)
+#host_start_button.pack(pady = 20, padx=20, side=tk.TOP)
+GTEST_BUTTON.pack(pady = 20, padx=20, side=tk.TOP)
 
 host_message_label.pack(pady = 20, padx=20, side=tk.LEFT, anchor='e')
 host_send_button.pack(pady = 20, padx=20, side=tk.RIGHT)
@@ -735,7 +827,7 @@ join_list_label = ttk.Label(server_list_page, text="List of users online: ", sty
 join_server_list = tk.Listbox(server_list_page, bg='white',selectmode="single")
 join_join_button = ttk.Button(server_list_page, text="Join", style="S.TButton")
 join_logout_button = ttk.Button(server_list_page, text="Logout", style="S.TButton", command=lambda: logout(GG))
-join_join_button.configure(command=lambda e,g=GG,s=join_server_list: join_host(e,g,s))
+join_join_button.configure(command=lambda e=None,g=GG,s=join_server_list: join_host(e,g,s))
 join_server_list.bind("<Double-Button-1>", lambda e,g=GG,s=join_server_list: join_host(e,g,s))
 
 join_list_label.pack(padx=20, pady=20, side=tk.TOP, anchor='nw')
@@ -746,6 +838,8 @@ join_logout_button.pack(padx=20, pady=20, side=tk.RIGHT, anchor='nw')
 # ! GAME SCREEN !
 # 4th Test Window : Actual game (testing, iterate)
 game_canvas = tk.Canvas(game_page, bg="#000000")
+game_canvas.config(width=screen_width*2/3, height=screen_height*2/3)
+
 game_text_frame = ttk.Frame(game_page)
 game_text_frame.pack(side=tk.BOTTOM,fill='x')
 game_text_label = ttk.Label(game_text_frame, text="Destroy the words by typing them! : ", style="M.TLabel")
@@ -766,7 +860,8 @@ def main():
     tcp_listener_thread.start()
     # Display login page
     login_page.pack(fill='both',expand=True)
-    login_uname_entry.focus_set()    
+    center_window(root)
+    login_uname_entry.focus_set()
     root.mainloop()
 
 # Script import protection
