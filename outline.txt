@@ -19,13 +19,11 @@ Progress:
 7. Versioning with tags set up in git.
 8. Added a small timeout to listener threads, they should now shutdown gracefully. Tests with 2nd laptop show no noticeable difference.
 9. Skeletal main game loop framework implemented. Word spawning, typing, checking, deletion if word matches, working well.
+10. Text communication in lobby working. Send and receive gameloops in 2 different threads.
+11. Peer disconnection handler set up to gracefully exit peer connectivity threads.
+12. Disconnect call added to logout function.
 
-CURRENTLY WORKING ON    : Joining chatroom via TCP, sending and receiving more complex objects than strings. Check whether single socket can send and receive at the same time.
-                          Fix item cget error for joining server among list
-                          Test socket & other functionalities with 2nd laptop.
-                          >! peer connection socket being garbage collected, even though it has been referenced in class
-                          Fixed, now can chat between people.
-                          Need more graceful exit of threads, server display refresh happening on exit for some reason
+CURRENTLY WORKING ON    : Clean up UI, Ready checkbox, skeletal game with 2 players.
 
 Useful
 ======
