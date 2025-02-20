@@ -7,6 +7,7 @@ import socket
 import threading
 from threading import Event
 import time
+import random
 
 # Small section to get screen dimensions
 rope = tk.Tk()
@@ -21,6 +22,7 @@ rope.destroy()
 # Main window definition, title and dimensions
 root = tk.Tk()
 root.title("Typ Wars")
+root.resizable(False, False)
 #root.geometry("720x480") # Setting static dimensions affects dynamic resize, so leave it as is
 
 # ----------------------------------------------
@@ -92,14 +94,31 @@ class globalState:
     def update_peer_server_status(self,hostname,status):
         with self.gLock:
             self.peerIsServer[hostname]=status
-    def start_game(self,area,game_text_entry):
+    def start_game(self,area,game_text_entry,words):
+        if hasattr(self,"connectedPeer"):
+            send_message("[ Game has started! ]",True)
+        else:
+            display_message("[ "+self.userName+" is Playing alone.. ]\n")
         with self.gLock:
             self.STATE="IN_GAME"
-            self.GAME=gameState(area,game_text_entry)
-    def exit_game(self):
-        with self.gLock:
-            self.STATE="LOGGED_IN"
-            delattr(self,"GAME")
+            self.GAME=gameState(area,game_text_entry,words)
+    def exit_game(self,from_peer=False):
+        self.GAME.end_game()
+        self.STATE="LOGGED_IN"
+        game_page.pack_forget()
+        if from_peer:                                                       # Exit from peer in multiplayer
+            warning_popup(self.connectedPeer+" has quit the game!")
+            display_message("[ "+self.connectedPeer+" quit the game ]\n")
+        elif hasattr(self,"connectedPeer"):                                 # Exit from here in multiplayer
+            display_message("[ "+self.userName+" quit the game ]\n")
+            self.sendBuffer="__EXIT__"
+            self.sendWaiter.set()
+        else:
+            display_message("[ "+self.userName+" quit the game ]\n")
+        server_page.pack(expand=True,fill='both')
+        center_window(root)
+        host_my_message.focus_set()
+        delattr(self,"GAME")
     def exit_app(self):
         with self.gLock:
             self.threadz=False
@@ -207,18 +226,19 @@ class globalState:
 GG=globalState()
 
 class gameState:
-    def __init__(self,area,field,button=None):
-        self.goodWords = [] # list of acceptable words.. move file opening here?
+    def __init__(self,area,field,words,button=None):
+        self.goodWords = words # list of acceptable words.. move file opening here?
         self.screenWords = {} # list of words on screen
         self.h_tick = screen_height/100
         self.spawnArea = screen_width*(2/3)
-        self.w_tick = 50
-        self.screenLimit = 20
+        self.w_tick = 100
+        self.difficulty = 0.6
+        self.screenLimit = 3
         self.wordCount = 0
-        self.difficulty = 0.5
+        self.diffScore = 100
         self.screen=area
         self.textField = field
-        self.textField.bind("<Return>", lambda e: self.word_entered(e) )
+        self.textField.bind( "<Return>", lambda e: self.word_entered(e) )
     def spawn_word(self,word):
         if word in self.screenWords:
             dbg("duplicate word on screen")
@@ -226,25 +246,44 @@ class gameState:
             t=self.screen.create_text(self.w_tick,50,text=word,fill="#FFFFFF",font=("Arial",20))
             self.w_tick += (self.spawnArea/6)
             if self.w_tick > self.spawnArea:
-                self.w_tick=50
+                self.w_tick=100
             self.screenWords[word]=t
             self.wordCount+=1
+    def end_game(self):
+        self.screen.delete("all")
+        LIFE.set("3")
+        SCORE.set("0")
     def word_entered(self,event):
         # if word in words: # verify if word is a dictionary word
         word=self.textField.get()
         self.textField.delete(0,'end')
-        dbg("Enter success")
-        dbg("List: ",self.screenWords)
-        dbg("Word: ",word)
         if word in self.screenWords:
-            dbg("If success")
             self.screen.delete(self.screenWords[word])
             del self.screenWords[word]
+            self.wordCount-=1
+            s=int(SCORE.get())
+            s+=5
+            SCORE.set(str(s))
+            if s > self.diffScore and self.diffScore<500:   # Raise difficulty at every 100 points of score
+                self.difficulty-=0.1
+                self.screenLimit+=1
+                self.diffScore+=100
     def update(self):
-        for i in self.screenWords:
+        if self.wordCount < 3:
+            v = random.randrange(len(self.goodWords))
+            print(v)
+            while (self.goodWords[v] in self.screenWords):
+                v = random.randrange(len(self.goodWords))
+            self.spawn_word(self.goodWords[v])
+        for i in self.screenWords.copy():
             self.screen.move(self.screenWords[i],0,self.h_tick)
-    def get_difficulty(self):
-        return self.difficulty
+            if self.screen.coords(self.screenWords[i])[1] > (screen_height*(2/3)-15):
+                self.screen.delete(self.screenWords[i])
+                del self.screenWords[i]
+                self.wordCount-=1
+                # [LATER] DAMAGE FX !
+                l=int(LIFE.get())-1
+                LIFE.set(str(l))
 
 # ----------------------------------------------
 #               NETWORKING CONSTANTS
@@ -394,6 +433,7 @@ def join_host(event,G,widget):
             server_list_page.pack_forget()
             server_page.pack(fill='both',expand=True)
             center_window(root)
+            host_my_message.focus_set()
         else:
             dbg("ERROR! ",host,"is not a server!",d=1)
             return
@@ -523,11 +563,13 @@ def game_receive_loop(G):
             G.recv_message(msg[4:])
         elif msg.startswith("SIG|"):
             G.recv_message(msg[4:],True)
-        elif msg.startswith("__READY__"):
-            G.ready_toggle(True)
         elif msg.startswith("GAME|"):
             pass
             # ^ [LATER] add code for game word exchange here
+        elif msg.startswith("__READY__"):
+            G.ready_toggle(True)
+        elif msg.startswith("__EXIT__"):
+            G.exit_game(True)
         elif msg=="__DISCONNECT__":
             G.peer_disconnect(True)
             return
@@ -578,22 +620,26 @@ def peer_disconnect_handler(self):
 # ----------------------------------------------
 
 def game_loop(G,area):
-    G.start_game(area,game_text_entry)
+    G.start_game(area,game_text_entry,word_list)
     test = ["the","five","boxing","wizards","jump","quickly"]
     for i in test:
         G.GAME.spawn_word(i)
     while G.STATE=="IN_GAME":
         G.GAME.update()
-        time.sleep(0.5)
+        if int(LIFE.get()) == 0:
+            warning_popup(root,"Game over!\nFinal Score: "+SCORE.get())
+            G.exit_game()
+            break
+        time.sleep(G.GAME.difficulty)
 
-def test_loop(G,area):
-    GAME=gameState(area,game_text_entry)
-    test = ["the","five","boxing","wizards","jump","quickly"]
-    for i in test:
-        GAME.spawn_word(i)
-    while G.get_app_status():
-        GAME.update()
-        time.sleep(0.5)
+# ~ def test_loop(G,area):
+    # ~ GAME=gameState(area,game_text_entry)
+    # ~ test = ["the","five","boxing","wizards","jump","quickly"]
+    # ~ for i in test:
+        # ~ GAME.spawn_word(i)
+    # ~ while G.get_app_status():
+        # ~ GAME.update()
+        # ~ time.sleep(0.5)
 
 def test_game(G):
     server_page.pack_forget()
@@ -647,7 +693,7 @@ def login(event,G):
     # Check peers to update which are in Server mode right now
     server_refresh(G)
     
-    G.login_success()    
+    G.login_success()
     host_loggedin_label.configure(text=host_loggedin_label.cget("text")+G.get_username())
     if not G.get_peer_server_list():
 		# If there's no other server online, set this system to be server
@@ -727,10 +773,10 @@ style.configure("M.TEntry", foreground="red") # For some reason Entry font can't
 style.configure("M.TButton", font=('Ariel',25))
 style.configure("S.TButton", font=('Ariel',15))
 style.configure("S.TCheckbutton", font=('Ariel',15))#, indicatorbackground="white", indicatorforeground="green")
-img_unticked_box = tk.PhotoImage(file="0.png")
-img_ticked_box = tk.PhotoImage(file="1.png")
+img_unticked_box = tk.PhotoImage(file="assets/0.png")
+img_ticked_box = tk.PhotoImage(file="assets/1.png")
 style.element_create("tickbox", "image", img_unticked_box, ("selected", img_ticked_box))
-# replace the checkbutton indicator with the custom tickbox in the Checkbutton's layout
+# Replace the checkbutton indicator with the custom tickbox in the Checkbutton's layout
 style.layout(
     "TCheckbutton", 
     [('Checkbutton.padding',
@@ -815,11 +861,11 @@ host_logout_button.pack(pady = 20, padx=20, side=tk.TOP)
 
 #host_ready_button.pack(pady = 20, padx=20, side=tk.TOP)
 #host_start_button.pack(pady = 20, padx=20, side=tk.TOP)
-GTEST_BUTTON.pack(pady = 20, padx=20, side=tk.TOP)
+GTEST_BUTTON.pack(pady=20, padx=20, side=tk.TOP)
 
-host_message_label.pack(pady = 20, padx=20, side=tk.LEFT, anchor='e')
-host_send_button.pack(pady = 20, padx=20, side=tk.RIGHT)
-host_my_message.pack(pady = 20, padx=20, side=tk.RIGHT, expand=True, fill='x')
+host_message_label.pack(pady=20, padx=20, side=tk.LEFT, anchor='e')
+host_send_button.pack(pady=20, padx=20, side=tk.RIGHT)
+host_my_message.pack(pady=20, padx=20, side=tk.RIGHT, expand=True, fill='x')
 
 # ! SERVER LIST SCREEN !
 # If there are other users online, display list.
@@ -837,6 +883,18 @@ join_logout_button.pack(padx=20, pady=20, side=tk.RIGHT, anchor='nw')
 
 # ! GAME SCREEN !
 # 4th Test Window : Actual game (testing, iterate)
+SCORE=tk.StringVar()
+SCORE.set("0")
+LIFE=tk.StringVar()
+LIFE.set("3")
+game_top_frame = ttk.Frame(game_page)
+game_top_frame.pack(side=tk.TOP,fill='x')
+game_lives_label = ttk.Label(game_top_frame, text="Lives: ", style="M.TLabel")
+game_life = ttk.Label(game_top_frame, font=('Ariel',15), textvariable=LIFE)
+game_score_label = ttk.Label(game_top_frame, text="Score: ", style="M.TLabel")
+game_score = ttk.Label(game_top_frame, font=('Ariel',15), textvariable=SCORE)
+game_quit_button = ttk.Button(game_top_frame, text="Quit", style="S.TButton", command=GG.exit_game)
+
 game_canvas = tk.Canvas(game_page, bg="#000000")
 game_canvas.config(width=screen_width*2/3, height=screen_height*2/3)
 
@@ -845,6 +903,11 @@ game_text_frame.pack(side=tk.BOTTOM,fill='x')
 game_text_label = ttk.Label(game_text_frame, text="Destroy the words by typing them! : ", style="M.TLabel")
 game_text_entry = ttk.Entry(game_text_frame, font=('Ariel',15))
 
+game_lives_label.pack(padx=10, pady=20, side=tk.LEFT)
+game_life.pack(padx=10, pady=20, side=tk.LEFT)
+game_score_label.pack(padx=10, pady=20, side=tk.LEFT)
+game_score.pack(padx=10, pady=20, side=tk.LEFT)
+game_quit_button.pack(padx=10, pady=20, side=tk.RIGHT)
 game_text_label.pack(padx=10, pady=20, side=tk.LEFT)
 game_text_entry.pack(padx=10, pady=20, side=tk.LEFT,fill='x',expand=True)
 game_canvas.pack(fill='both',expand=True)
