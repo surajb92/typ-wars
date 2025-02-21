@@ -227,60 +227,66 @@ GG=globalState()
 
 class gameState:
     def __init__(self,area,field,words,button=None):
-        self.goodWords = words # list of acceptable words.. move file opening here?
-        self.screenWords = {} # list of words on screen
+        self.goodWords = words                      # list of acceptable words
+        self.screenWords = {}                       # list of words on screen
         self.h_tick = screen_height/100
         self.spawnArea = screen_width*(2/3)
         self.w_tick = 100
-        self.difficulty = 0.6
-        self.screenLimit = 3
+        self.difficulty = 0
+        self.speed = [ 0.8, 0.6, 0.5, 0.4, 0.2, 0.15 ]
+        self.wordLength = [ 4, 6, 8, 10, 12, 50 ]
+        self.screenLimit = [ 3, 3, 4, 4, 5, 5 ]
         self.wordCount = 0
-        self.diffScore = 100
+        self.diffScore = [ 100, 200, 300, 400, 500, 1000 ]
         self.screen=area
         self.textField = field
         self.textField.bind( "<Return>", lambda e: self.word_entered(e) )
+        self.gameLock = threading.Lock()
     def spawn_word(self,word):
         if word in self.screenWords:
             dbg("duplicate word on screen")
-        if self.wordCount < self.screenLimit:
-            t=self.screen.create_text(self.w_tick,50,text=word,fill="#FFFFFF",font=("Arial",20))
+        if self.wordCount < self.screenLimit[self.difficulty]:
+            self.word_INSERT(word)
             self.w_tick += (self.spawnArea/6)
             if self.w_tick > self.spawnArea:
                 self.w_tick=100
-            self.screenWords[word]=t
-            self.wordCount+=1
     def end_game(self):
         self.screen.delete("all")
+        self.textField.delete(0,'end')
         LIFE.set("3")
         SCORE.set("0")
-    def word_entered(self,event):
-        # if word in words: # verify if word is a dictionary word
-        word=self.textField.get()
-        self.textField.delete(0,'end')
-        if word in self.screenWords:
+    def word_INSERT(self,word):
+        with self.gameLock:
+            t=self.screen.create_text(self.w_tick,50,text=word,fill="#FFFFFF",font=("Arial",20))
+            self.screenWords[word]=t
+            self.wordCount+=1
+    def word_DELETE(self,word):
+        with self.gameLock:
             self.screen.delete(self.screenWords[word])
             del self.screenWords[word]
             self.wordCount-=1
+    def word_entered(self,event):
+        word=self.textField.get()
+        self.textField.delete(0,'end')
+        if word in self.screenWords:
+            self.word_DELETE(word)
             s=int(SCORE.get())
             s+=5
             SCORE.set(str(s))
-            if s > self.diffScore and self.diffScore<500:   # Raise difficulty at every 100 points of score
-                self.difficulty-=0.1
-                self.screenLimit+=1
-                self.diffScore+=100
-    def update(self):
-        if self.wordCount < 3:
+            if s > self.diffScore[self.difficulty] and self.difficulty < 6:   # Raise difficulty when score reaches certain thresholds
+                self.difficulty+=1
+    def single_player_update(self):
+        print(self.wordCount)
+        if self.wordCount < self.screenLimit[self.difficulty]:
             v = random.randrange(len(self.goodWords))
-            print(v)
-            while (self.goodWords[v] in self.screenWords):
+            while (self.goodWords[v] in self.screenWords) or (len(self.goodWords[v]) > self.wordLength[self.difficulty] ):
                 v = random.randrange(len(self.goodWords))
             self.spawn_word(self.goodWords[v])
         for i in self.screenWords.copy():
-            self.screen.move(self.screenWords[i],0,self.h_tick)
+            with self.gameLock:
+                self.screen.move(self.screenWords[i],0,self.h_tick)
             if self.screen.coords(self.screenWords[i])[1] > (screen_height*(2/3)-15):
-                self.screen.delete(self.screenWords[i])
-                del self.screenWords[i]
-                self.wordCount-=1
+                self.word_DELETE(i)
                 # [LATER] DAMAGE FX !
                 l=int(LIFE.get())-1
                 LIFE.set(str(l))
@@ -621,16 +627,13 @@ def peer_disconnect_handler(self):
 
 def game_loop(G,area):
     G.start_game(area,game_text_entry,word_list)
-    test = ["the","five","boxing","wizards","jump","quickly"]
-    for i in test:
-        G.GAME.spawn_word(i)
     while G.STATE=="IN_GAME":
-        G.GAME.update()
+        G.GAME.single_player_update()
         if int(LIFE.get()) == 0:
             warning_popup(root,"Game over!\nFinal Score: "+SCORE.get())
             G.exit_game()
             break
-        time.sleep(G.GAME.difficulty)
+        time.sleep(G.GAME.speed[G.GAME.difficulty])
 
 # ~ def test_loop(G,area):
     # ~ GAME=gameState(area,game_text_entry)
