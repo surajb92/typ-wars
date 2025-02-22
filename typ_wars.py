@@ -1,5 +1,4 @@
 import tkinter as tk
-#import tkinter.simpledialog
 from tkinter import messagebox
 from tkinter import simpledialog
 from tkinter import ttk
@@ -8,6 +7,7 @@ import threading
 from threading import Event
 import time
 import random
+import datetime
 
 # Small section to get screen dimensions
 rope = tk.Tk()
@@ -362,14 +362,20 @@ TTL=2
 #                 GENERAL FUNCTIONS 
 # ----------------------------------------------
 
+dbg_file = open("debug.txt","a")
+
 # For debugging
 def dbg(*args,d=0):
     if d==0:
         print(*args) # Remove for production
     else:
-        # These are exceptions, log these into file or smth later on, for now just print
-        print("DebugLine: ")
-        print(*args)
+        # Log exceptions
+        current_datetime = datetime.datetime.now()
+        formatted_datetime = current_datetime.strftime("%Y-%m-%d %H:%M:%S")
+        dbg_file.write(formatted_datetime+": ")
+        for i in args:
+            dbg_file.write(str(i)+" ")
+        dbg_file.write('\n')
 
 # Center the window
 def center_window(window):
@@ -400,6 +406,7 @@ def quit_program(G):
     udp_listener_thread.join()
     tcp_listener_thread.join()
     root.destroy()
+    dbg_file.close()
 
 # Force use above function when main window is closed in any form
 root.protocol('WM_DELETE_WINDOW', lambda: quit_program(GG))

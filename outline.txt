@@ -29,7 +29,7 @@ Progress:
 17. Multiplayer gameloop set up including score sharing, word sending, game over screen and winning screen.
 18. Multiplayer gameloop tested, most major and minor bugs fixed. Seems stable as of now.
 
-Project Complete.
+Project Complete! Only QoL stuff left.
 
 Useful
 ======
