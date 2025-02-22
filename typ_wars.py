@@ -269,6 +269,7 @@ class gameState:
             return
         if word in self.screenWords:
             self.word_DELETE(word)
+            score_UP()
             # Peer helped you out lol!
         else:
             self.word_INSERT(word)
