@@ -45,24 +45,33 @@ class globalState:
 
     # Display and send messages you type
     def send_message(self,msg,signal=False):
-        host_my_message.delete(0,'end')
         if signal:                              # Not a chat message, but a system message
             txt = msg+'\n'
         else:
             txt = self.userName+": "+msg+'\n'
+            host_my_message.delete(0,'end')
         display_message(txt)
         if hasattr(self,"connectedPeer"):
             if signal:
-                self.send_to_peer("SIG|"+msg)
+                self.send_to_peer("SIG|"+txt)
             else:
-                self.send_to_peer("MSG|"+msg)
+                self.send_to_peer("MSG|"+txt)
 
+    def game_send_word(self,word):
+        self.send_to_peer("GAME|"+word+"|"+SCORE.get())
+
+    def game_recv_word(self,word):
+        part=word.partition("|")
+        self.GAME.spawn_word(part[0],part[2])
+    
+    def you_win(self):
+        self.STATE="WIN"
     # Display messages sent by your peer
     def recv_message(self,msg,signal=False):
         if signal:
-            txt = msg+'\n'
+            txt = msg
         else:
-            txt = self.connectedPeer +": "+msg+'\n'
+            txt = msg
         display_message(txt)
 
     # Functions to change game state
@@ -95,8 +104,8 @@ class globalState:
         with self.gLock:
             self.peerIsServer[hostname]=status
     def start_game(self,area,game_text_entry,words):
-        if hasattr(self,"connectedPeer"):
-            send_message("[ Game has started! ]",True)
+        if self.isServer:
+            self.send_message("[ Game has started! ]",True)
         else:
             display_message("[ "+self.userName+" is Playing alone.. ]\n")
         with self.gLock:
@@ -104,25 +113,29 @@ class globalState:
             self.GAME=gameState(area,game_text_entry,words)
     def exit_game(self,from_peer=False):
         self.GAME.end_game()
-        self.STATE="LOGGED_IN"
         game_page.pack_forget()
         if from_peer:                                                       # Exit from peer in multiplayer
-            warning_popup(self.connectedPeer+" has quit the game!")
-            display_message("[ "+self.connectedPeer+" quit the game ]\n")
+            if self.STATE=="WIN":
+                self.STATE="LOGGED_IN"
+                display_message("[ Game has ended ]\n")
+            else:
+                self.STATE="GAME_QUIT_PEER"
+                display_message("[ "+self.connectedPeer+" quit the game ]\n")
         elif hasattr(self,"connectedPeer"):                                 # Exit from here in multiplayer
-            display_message("[ "+self.userName+" quit the game ]\n")
-            self.sendBuffer="__EXIT__"
-            self.sendWaiter.set()
+            if self.STATE=="LOSE":
+                self.STATE="LOGGED_IN"
+                display_message("[ Game has ended ]\n")
+            else:
+                self.STATE="GAME_QUIT_ME"
+                display_message("[ "+self.userName+" quit the game ]\n")
         else:
+            self.STATE="GAME_QUIT_ME"
             display_message("[ "+self.userName+" quit the game ]\n")
-        server_page.pack(expand=True,fill='both')
-        center_window(root)
-        host_my_message.focus_set()
-        delattr(self,"GAME")
     def exit_app(self):
         with self.gLock:
             self.threadz=False
     def peer_connect(self,peer,conn):
+        GTEST_BUTTON.pack_forget()
         host_peer_label.configure(text="Connected: "+peer)
         host_disconnect_button.pack(pady = 20, padx=20, side=tk.TOP)
         with self.gLock:
@@ -147,6 +160,7 @@ class globalState:
     def peer_disconnect(self,from_peer=False):
         self.dc_from_peer=from_peer                         # Do not delete, required by peer_disconnect_handler
         if self.isServer:
+            GTEST_BUTTON.pack(pady=20, padx=20, side=tk.TOP)
             if from_peer:
                 display_message("[ "+self.connectedPeer+" has left ]\n")
             else:
@@ -172,8 +186,7 @@ class globalState:
             else:
                 host_start_button.pack_forget()
         if not from_peer:
-            self.sendBuffer="__READY__"
-            self.sendWaiter.set()
+            self.send_to_peer("__READY__")
             while self.sendWaiter.is_set():              # Wait until ready signal is sent
                 pass
             if self.readySignal.get():
@@ -181,6 +194,8 @@ class globalState:
             else:
                 self.send_message("[ "+self.userName+" is not Ready.. ]",True)
     def send_to_peer(self,msg):                         # Using gLock here will lead to deadlock
+        while self.sendWaiter.is_set():                 # Finish any pending send operation before starting another one
+            pass
         self.sendBuffer=msg
         self.sendWaiter.set()
     # Functions to read game state
@@ -233,19 +248,29 @@ class gameState:
         self.spawnArea = screen_width*(2/3)
         self.w_tick = 100
         self.difficulty = 0
-        self.speed = [ 0.8, 0.6, 0.5, 0.4, 0.2, 0.15 ]
+        self.speed = [ 0.8, 0.7, 0.6, 0.5, 0.35, 0.2 ]
         self.wordLength = [ 4, 6, 8, 10, 12, 50 ]
         self.screenLimit = [ 3, 3, 4, 4, 5, 5 ]
-        self.wordCount = 0
         self.diffScore = [ 100, 200, 300, 400, 500, 1000 ]
+        self.wordCount = 0
         self.screen=area
         self.textField = field
         self.textField.bind( "<Return>", lambda e: self.word_entered(e) )
         self.gameLock = threading.Lock()
-    def spawn_word(self,word):
+        self.sendWord = ''
+    def set_peer(self):
+        self.peerScore=0
+        game_peer_score_label.pack(padx=20, pady=20, side=tk.LEFT)
+        game_peer_score.pack(pady=20, side=tk.LEFT)
+    def spawn_word(self,word,score=''):
+        if score:
+            PEER_SCORE.set(score)
+        if not word:
+            return
         if word in self.screenWords:
-            dbg("duplicate word on screen")
-        if self.wordCount < self.screenLimit[self.difficulty]:
+            self.word_DELETE(word)
+            # Peer helped you out lol!
+        else:
             self.word_INSERT(word)
             self.w_tick += (self.spawnArea/6)
             if self.w_tick > self.spawnArea:
@@ -255,6 +280,10 @@ class gameState:
         self.textField.delete(0,'end')
         LIFE.set("3")
         SCORE.set("0")
+        game_peer_score_label.pack_forget()
+        game_peer_score.pack_forget()
+        if hasattr(self,"peerScore"):
+            delattr(self,"peerScore")
     def word_INSERT(self,word):
         with self.gameLock:
             t=self.screen.create_text(self.w_tick,50,text=word,fill="#FFFFFF",font=("Arial",20))
@@ -265,18 +294,39 @@ class gameState:
             self.screen.delete(self.screenWords[word])
             del self.screenWords[word]
             self.wordCount-=1
+    def score_UP(self):
+        s=int(SCORE.get())
+        s+=5
+        SCORE.set( str(s) )
+        self.sendWord="__SCORE__"
+        return s
     def word_entered(self,event):
         word=self.textField.get()
         self.textField.delete(0,'end')
         if word in self.screenWords:
             self.word_DELETE(word)
-            s=int(SCORE.get())
-            s+=5
-            SCORE.set(str(s))
+            s=self.score_UP()
             if s > self.diffScore[self.difficulty] and self.difficulty < 6:   # Raise difficulty when score reaches certain thresholds
                 self.difficulty+=1
+        elif word in self.goodWords:
+            # SEND WORD TO ENEMY
+            self.sendWord = word
+            
+    def multi_player_update(self):
+        if self.wordCount < 2:
+            v = random.randrange(len(self.goodWords))
+            while (self.goodWords[v] in self.screenWords) or (len(self.goodWords[v]) > self.wordLength[self.difficulty] ):
+                v = random.randrange(len(self.goodWords))
+            self.spawn_word(self.goodWords[v])
+        for i in self.screenWords.copy():
+            with self.gameLock:
+                self.screen.move(self.screenWords[i],0,self.h_tick)
+            if self.screen.coords(self.screenWords[i])[1] > (screen_height*(2/3)-15):
+                self.word_DELETE(i)
+                # [LATER] DAMAGE FX !
+                l=int(LIFE.get())-1
+                LIFE.set(str(l))
     def single_player_update(self):
-        print(self.wordCount)
         if self.wordCount < self.screenLimit[self.difficulty]:
             v = random.randrange(len(self.goodWords))
             while (self.goodWords[v] in self.screenWords) or (len(self.goodWords[v]) > self.wordLength[self.difficulty] ):
@@ -437,7 +487,7 @@ def join_host(event,G,widget):
                 return
             G.peer_connect(host,ggame)
             server_list_page.pack_forget()
-            server_page.pack(fill='both',expand=True)
+            server_page.pack(expand=True,fill='both')
             center_window(root)
             host_my_message.focus_set()
         else:
@@ -570,12 +620,15 @@ def game_receive_loop(G):
         elif msg.startswith("SIG|"):
             G.recv_message(msg[4:],True)
         elif msg.startswith("GAME|"):
-            pass
-            # ^ [LATER] add code for game word exchange here
+            G.game_recv_word(msg[5:])
+        elif msg.startswith("__START__"):
+            ready_game(G,True)
         elif msg.startswith("__READY__"):
             G.ready_toggle(True)
         elif msg.startswith("__EXIT__"):
             G.exit_game(True)
+        elif msg.startswith("__GAMEOVER__"):
+            G.you_win()
         elif msg=="__DISCONNECT__":
             G.peer_disconnect(True)
             return
@@ -597,7 +650,6 @@ def game_send_loop(G):
             return
         if msg=="__DISCONNECT__":
             return
-    #G.rcv_loop.join()
     
 def peer_disconnect_handler(self):
     self.disconWaiter.wait()                        # Flag to set for when you want to disconnected, will wait here
@@ -625,7 +677,7 @@ def peer_disconnect_handler(self):
 #               GAME FUNCTIONS 
 # ----------------------------------------------
 
-def game_loop(G,area):
+def singleplayer_game_loop(G,area):
     G.start_game(area,game_text_entry,word_list)
     while G.STATE=="IN_GAME":
         G.GAME.single_player_update()
@@ -634,22 +686,58 @@ def game_loop(G,area):
             G.exit_game()
             break
         time.sleep(G.GAME.speed[G.GAME.difficulty])
+    if G.STATE=="GAME_QUIT_ME":
+        warning_popup(root,"Game ended!")
+    host_disconnect_button.pack(pady = 20, padx=20, side=tk.BOTTOM)
+    server_page.pack(expand=True,fill='both')
+    center_window(root)
+    host_disconnect_button.pack_forget()
+    host_my_message.focus_set()
+    delattr(G,"GAME")
 
-# ~ def test_loop(G,area):
-    # ~ GAME=gameState(area,game_text_entry)
-    # ~ test = ["the","five","boxing","wizards","jump","quickly"]
-    # ~ for i in test:
-        # ~ GAME.spawn_word(i)
-    # ~ while G.get_app_status():
-        # ~ GAME.update()
-        # ~ time.sleep(0.5)
+def multiplayer_game_loop(G,area):
+    G.start_game(area,game_text_entry,word_list)
+    G.GAME.set_peer()
+    while G.STATE=="IN_GAME":
+        G.GAME.multi_player_update()
+        if int(LIFE.get()) == 0:
+            G.send_to_peer("__GAMEOVER__")
+            G.STATE="LOSE"
+            warning_popup(root,"You LOSE !\nOpponent: "+PEER_SCORE.get()+"\nYou: "+SCORE.get())
+            G.exit_game()
+            break
+        elif G.GAME.sendWord:
+            if G.GAME.sendWord=="__SCORE__":
+                G.game_send_word('')
+            else:
+                G.game_send_word(G.GAME.sendWord)
+            G.GAME.sendWord=''
+        time.sleep(G.GAME.speed[G.GAME.difficulty])
+    if G.STATE=="WIN":
+        warning_popup(root,"You WIN !\nOpponent: "+PEER_SCORE.get()+"\nYou: "+SCORE.get())
+        G.exit_game()
+    elif G.STATE=="GAME_QUIT_ME":
+        G.STATE="LOGGED_IN"
+        G.send_to_peer("__EXIT__")
+    elif G.STATE=="GAME_QUIT_PEER":
+        warning_popup(root, G.connectedPeer+" quit!")
+    server_page.pack(expand=True,fill='both')
+    center_window(root)
+    host_my_message.focus_set()
+    delattr(G,"GAME")
 
-def test_game(G):
+def ready_game(G,from_peer=False):
+    if not from_peer and hasattr(G,"connectedPeer"):
+        G.send_to_peer("__START__")
     server_page.pack_forget()
     game_page.pack(fill='both',expand=True)
     center_window(root)
+    # [LATER] Some form of countdown?
     game_text_entry.focus_set()
-    threading.Thread(target=game_loop,args=(G,game_canvas)).start()
+    if hasattr(G,"connectedPeer"):
+        threading.Thread(target=multiplayer_game_loop,args=(G,game_canvas)).start()
+    else:
+        threading.Thread(target=singleplayer_game_loop,args=(G,game_canvas)).start()
 
 # ----------------------------------------------
 #               TKINTER FUNCTIONS 
@@ -704,7 +792,7 @@ def login(event,G):
         for addr in G.get_peer_cache().values():
             server_inform(addr)
         host_disconnect_button.pack(pady = 20, padx=20, side=tk.TOP)
-        server_page.pack(fill='both',expand=True)
+        server_page.pack(expand=True,fill='both')
         center_window(root)
         host_disconnect_button.pack_forget()
         host_my_message.focus_set()
@@ -839,14 +927,14 @@ login_quit_button.pack(pady = 20, padx = 20, side=tk.RIGHT)
 host_bottom_frame = ttk.Frame(server_page)
 host_loggedin_label = ttk.Label(server_page, text="Logged in as: ", style="M.TLabel")
 host_peer_label = ttk.Label(server_page, text="No player connected.", style="M.TLabel")
-host_chat_display = tk.Text(server_page, bg='white')
+host_chat_display = tk.Text(server_page, bg='white', height=1)
 host_chat_display.configure(state='disabled')
 host_logout_button = ttk.Button(server_page, text="LOGOUT", style="S.TButton", command=lambda: logout(GG))
 
 host_disconnect_button = ttk.Button(server_page, text="DISCONNECT", style="S.TButton", command=GG.peer_disconnect)
 host_ready_button = ttk.Checkbutton(server_page, text="READY", style="S.TCheckbutton", command=GG.ready_toggle, variable=GG.readySignal)
-host_start_button = ttk.Button(server_page, text="START", style="S.TButton")
-GTEST_BUTTON = ttk.Button(server_page, text="GAME", style="S.TButton", command=lambda: test_game(GG)) # temp for testing
+host_start_button = ttk.Button(server_page, text="START", style="S.TButton", command=lambda: ready_game(GG))
+GTEST_BUTTON = ttk.Button(server_page, text="SOLO PLAY", style="S.TButton", command=lambda: ready_game(GG)) # Play Singleplayer
 
 host_message_label = ttk.Label(host_bottom_frame, text="Enter message: ", style="M.TLabel")
 host_my_message = ttk.Entry(host_bottom_frame, font=('Ariel',15))
@@ -888,6 +976,8 @@ join_logout_button.pack(padx=20, pady=20, side=tk.RIGHT, anchor='nw')
 # 4th Test Window : Actual game (testing, iterate)
 SCORE=tk.StringVar()
 SCORE.set("0")
+PEER_SCORE=tk.StringVar()
+PEER_SCORE.set("0")
 LIFE=tk.StringVar()
 LIFE.set("3")
 game_top_frame = ttk.Frame(game_page)
@@ -896,6 +986,8 @@ game_lives_label = ttk.Label(game_top_frame, text="Lives: ", style="M.TLabel")
 game_life = ttk.Label(game_top_frame, font=('Ariel',15), textvariable=LIFE)
 game_score_label = ttk.Label(game_top_frame, text="Score: ", style="M.TLabel")
 game_score = ttk.Label(game_top_frame, font=('Ariel',15), textvariable=SCORE)
+game_peer_score_label = ttk.Label(game_top_frame, text="Opp. Score: ", style="M.TLabel")
+game_peer_score = ttk.Label(game_top_frame, font=('Ariel',15), textvariable=PEER_SCORE)
 game_quit_button = ttk.Button(game_top_frame, text="Quit", style="S.TButton", command=GG.exit_game)
 
 game_canvas = tk.Canvas(game_page, bg="#000000")
@@ -910,6 +1002,8 @@ game_lives_label.pack(padx=10, pady=20, side=tk.LEFT)
 game_life.pack(padx=10, pady=20, side=tk.LEFT)
 game_score_label.pack(padx=10, pady=20, side=tk.LEFT)
 game_score.pack(padx=10, pady=20, side=tk.LEFT)
+#game_peer_score_label.pack(padx=20, pady=20, side=tk.LEFT)
+#game_peer_score.pack(pady=20, side=tk.LEFT)
 game_quit_button.pack(padx=10, pady=20, side=tk.RIGHT)
 game_text_label.pack(padx=10, pady=20, side=tk.LEFT)
 game_text_entry.pack(padx=10, pady=20, side=tk.LEFT,fill='x',expand=True)

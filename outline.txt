@@ -26,10 +26,10 @@ Progress:
 14. Start button will appear serverside when client is ready (and will disappear if client unchecks the box).
 15. Cleaned up a few unnecessary locks to avoid deadlock (might need to revisit for QoL but fine for now)
 16. Singleplayer gameloop set up including lives counter, score counter, game over screen and many QoL features.
+17. Multiplayer gameloop set up including score sharing, word sending, game over screen and winning screen.
+18. Multiplayer gameloop tested, most major and minor bugs fixed. Seems stable as of now.
 
-CURRENTLY WORKING ON    : Implement sending and receiving words etc.
-                          Skeletal game with 2 players.
-
+Project Complete.
 
 Useful
 ======
