@@ -21,6 +21,7 @@ Players mostly try to send each other words to compete.
 Words sent by your opponent player will be highlighted as red.
 > [!NOTE]
 > Sending a word to your opponent will give you double the score.
+
 > [!WARNING]
 > If you send a word which is already on your opponent's screen, you will help them out!
 ### Potential improvements (no guarantees)
