@@ -40,9 +40,7 @@ class globalState:
         self.gLock = threading.Lock()
         self.threadz=True
         self.readySignal=tk.BooleanVar()
-        #self.readySignal.set(False)
-        #self.GAME = gameState() # dynamic
-
+        
     # Display and send messages you type
     def send_message(self,msg,signal=False):
         if signal:                              # Not a chat message, but a system message
@@ -57,15 +55,6 @@ class globalState:
             else:
                 self.send_to_peer("MSG|"+txt)
 
-    def game_send_word(self,word):
-        self.send_to_peer("GAME|"+word+"|"+SCORE.get())
-
-    def game_recv_word(self,word):
-        part=word.partition("|")
-        self.GAME.spawn_word(part[0],part[2])
-    
-    def you_win(self):
-        self.STATE="WIN"
     # Display messages sent by your peer
     def recv_message(self,msg,signal=False):
         if signal:
@@ -73,6 +62,18 @@ class globalState:
         else:
             txt = msg
         display_message(txt)
+
+    # Send and receive words in multiplayer
+    def game_send_word(self,word):
+        self.send_to_peer("GAME|"+word+"|"+SCORE.get())
+
+    def game_recv_word(self,word):
+        part=word.partition("|")
+        self.GAME.spawn_word(part[0],part[2])
+    
+    # You win multiplayer
+    def you_win(self):
+        self.STATE="WIN"
 
     # Functions to change game state
     def start_login(self,username):
@@ -144,7 +145,6 @@ class globalState:
             self.sendWaiter=threading.Event()
             self.sendBuffer=''
             self.peerSocket.settimeout(0.1)
-            #self.peerSocket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 5)
             self.disconWaiter = threading.Event()
             self.readySignal.set(False)
             self.rcv_loop = threading.Thread(target=game_receive_loop,args=(self,))
@@ -198,6 +198,7 @@ class globalState:
             pass
         self.sendBuffer=msg
         self.sendWaiter.set()
+
     # Functions to read game state
     def get_app_status(self):
         with self.gLock:
@@ -240,6 +241,7 @@ class globalState:
 
 GG=globalState()
 
+# Class to handle game state
 class gameState:
     def __init__(self,area,field,words,button=None):
         self.goodWords = words                      # list of acceptable words
@@ -263,16 +265,18 @@ class gameState:
         game_peer_score_label.pack(padx=20, pady=20, side=tk.LEFT)
         game_peer_score.pack(pady=20, side=tk.LEFT)
     def spawn_word(self,word,score=''):
+        color="#FFFFFF"
         if score:
             PEER_SCORE.set(score)
+            color="#E00000"
         if not word:
             return
         if word in self.screenWords:
             self.word_DELETE(word)
-            score_UP()
+            self.score_UP(50)
             # Peer helped you out lol!
         else:
-            self.word_INSERT(word)
+            self.word_INSERT(word,color)
             self.w_tick += (self.spawnArea/6)
             if self.w_tick > self.spawnArea:
                 self.w_tick=100
@@ -285,9 +289,9 @@ class gameState:
         game_peer_score.pack_forget()
         if hasattr(self,"peerScore"):
             delattr(self,"peerScore")
-    def word_INSERT(self,word):
+    def word_INSERT(self,word,color="#FFFFFF"):
         with self.gameLock:
-            t=self.screen.create_text(self.w_tick,50,text=word,fill="#FFFFFF",font=("Arial",20))
+            t=self.screen.create_text(self.w_tick,50,text=word,fill=color,font=("Arial",20))
             self.screenWords[word]=t
             self.wordCount+=1
     def word_DELETE(self,word):
@@ -295,9 +299,9 @@ class gameState:
             self.screen.delete(self.screenWords[word])
             del self.screenWords[word]
             self.wordCount-=1
-    def score_UP(self):
+    def score_UP(self,sc=5):
         s=int(SCORE.get())
-        s+=5
+        s+=sc
         SCORE.set( str(s) )
         self.sendWord="__SCORE__"
         return s
@@ -327,6 +331,7 @@ class gameState:
                 # [LATER] DAMAGE FX !
                 l=int(LIFE.get())-1
                 LIFE.set(str(l))
+        self.screen.move(game_text_highlight,0,self.h_tick)
     def single_player_update(self):
         if self.wordCount < self.screenLimit[self.difficulty]:
             v = random.randrange(len(self.goodWords))
@@ -341,6 +346,7 @@ class gameState:
                 # [LATER] DAMAGE FX !
                 l=int(LIFE.get())-1
                 LIFE.set(str(l))
+        self.screen.move(game_text_highlight,0,self.h_tick)
 
 # ----------------------------------------------
 #               NETWORKING CONSTANTS
@@ -385,9 +391,7 @@ def center_window(window):
     height = window.winfo_reqheight()
     x = (screen_width - width) // 2
     y = (screen_height - height) // 2
-    #window.update()
     window.geometry(f"{width}x{height}+{x}+{y}")
-    #window.geometry(f"+{x}+{y}")
 
 # Refresh the display of servers on the client page
 def server_display_refresh(G):
@@ -501,7 +505,6 @@ def join_host(event,G,widget):
         else:
             dbg("ERROR! ",host,"is not a server!",d=1)
             return
-        #"""
 
 # ----------------------------------------------
 #           SERVER NETWORKING FUNCTIONS 
@@ -544,18 +547,6 @@ def udp_peer_listener(G):
                     G.add_peer(rec_user,addr[0])
                 # <-- SEND (PEER SHOUT)
                 peer_shout(G)
-                
-
-            # ~ if G.get_state()=="LOGGED_IN":
-                # ~ if rec_user != G.get_username():
-                    # ~ G.add_peer(rec_user,addr[0])
-                # ~ else:
-                    # ~ G.add_peer(rec_user,"__TEMP__") # Placeholder for duplicate username, will usually be deleted immediately. Avoids peer_shout loop.
-                # ~ # <-- SEND (PEER SHOUT)
-                # ~ peer_shout(G)
-            # ~ # I'm not logged in yet
-            # ~ else:
-                # ~ G.add_peer(rec_user,addr[0]) # server_ping(addr[0]))
 
 # Running as thread from the start
 def tcp_peer_listener(G):
@@ -719,6 +710,7 @@ def multiplayer_game_loop(G,area):
                 G.game_send_word('')
             else:
                 G.game_send_word(G.GAME.sendWord)
+                G.GAME.score_UP(10)
             G.GAME.sendWord=''
         time.sleep(G.GAME.speed[G.GAME.difficulty])
     if G.STATE=="WIN":
@@ -731,6 +723,7 @@ def multiplayer_game_loop(G,area):
         warning_popup(root, G.connectedPeer+" quit!")
     server_page.pack(expand=True,fill='both')
     center_window(root)
+    host_chat_display.see("end")
     host_my_message.focus_set()
     delattr(G,"GAME")
 
@@ -794,13 +787,14 @@ def login(event,G):
     
     G.login_success()
     host_loggedin_label.configure(text=host_loggedin_label.cget("text")+G.get_username())
+    login_page.pack_forget()
     if not G.get_peer_server_list():
 		# If there's no other server online, set this system to be server
         G.set_server_state(True)
         for addr in G.get_peer_cache().values():
             server_inform(addr)
         host_disconnect_button.pack(pady = 20, padx=20, side=tk.TOP)
-        server_page.pack(expand=True,fill='both')
+        server_page.pack(expand=True, fill='both')
         center_window(root)
         host_disconnect_button.pack_forget()
         host_my_message.focus_set()
@@ -808,10 +802,9 @@ def login(event,G):
         G.set_server_state(False)
         for i in G.get_peer_server_list():
             join_server_list.insert(1, i)
-        server_list_page.pack(fill='both',expand=True)
+        server_list_page.pack(expand=True, fill='both')
         center_window(root)
         # [LATER] Implement TCP connection to server 
-    login_page.pack_forget()
 
 def logout(G):
     join_server_list.delete(0,tk.END)
@@ -821,7 +814,7 @@ def logout(G):
     display_message("",True)
     server_page.pack_forget()
     server_list_page.pack_forget()
-    login_page.pack(fill='both',expand=True)
+    login_page.pack(expand=True, fill='both')
     center_window(root)
     login_uname_entry.focus_set()
 
@@ -833,6 +826,7 @@ def display_message(text,clear=False):
     else:
         host_chat_display.insert('end',text)
     host_chat_display.configure(state='disabled')
+    host_chat_display.see(tk.END)
 
 # tk validation function, to make sure there's no spaces in the "username" field and restrict to 16 characters
 def valuser(newchar, current_string):
@@ -841,6 +835,26 @@ def valuser(newchar, current_string):
     else:
         return False
 vcmd = root.register(valuser)
+
+def highlighter(event, G):
+    word=event.widget.get()
+    lastkey=event.keysym
+    shine_word=None
+    gh=G.GAME.screen.itemcget(game_text_highlight,'text') #game_text_highlight.get()
+    for i in G.GAME.screenWords:
+        if i.startswith(word):
+            shine_word = i
+    if shine_word:
+        G.GAME.screen.tag_raise(game_text_highlight)
+        bb=G.GAME.screen.bbox(G.GAME.screenWords[shine_word])
+        G.GAME.screen.moveto(game_text_highlight,bb[0],bb[1])
+        G.GAME.screen.itemconfig(game_text_highlight, text=word)
+    elif(gh[:-1]):
+        #G.GAME.screen.game_text_highlight.
+        G.GAME.screen.itemconfig(game_text_highlight, text=gh)
+    else:
+        G.GAME.screen.itemconfig(game_text_highlight, text="")
+    #if word in G.GAME.
 
 # Proxy function to send message from TKInter to State machine's message handler
 def msg_proxy(event,G,widget):
@@ -937,6 +951,8 @@ host_loggedin_label = ttk.Label(server_page, text="Logged in as: ", style="M.TLa
 host_peer_label = ttk.Label(server_page, text="No player connected.", style="M.TLabel")
 host_chat_display = tk.Text(server_page, bg='white', height=1)
 host_chat_display.configure(state='disabled')
+host_scrollbar = ttk.Scrollbar(server_page, command=host_chat_display.yview)
+host_chat_display['yscrollcommand'] = host_scrollbar.set
 host_logout_button = ttk.Button(server_page, text="LOGOUT", style="S.TButton", command=lambda: logout(GG))
 
 host_disconnect_button = ttk.Button(server_page, text="DISCONNECT", style="S.TButton", command=GG.peer_disconnect)
@@ -950,16 +966,14 @@ host_send_button = ttk.Button(host_bottom_frame, text="Send", style="S.TButton",
 
 # Binding Enter key to allow sending messages
 host_my_message.bind("<Return>", lambda e="<Return>",G=GG,widget=host_my_message : msg_proxy(e,G,widget))
+host_my_message.bind("<FocusIn>", lambda e : host_chat_display.see(tk.END))
 
 host_bottom_frame.pack(side=tk.BOTTOM,fill='x')
 host_loggedin_label.pack(padx=10, pady=10, side=tk.TOP)
 host_peer_label.pack(padx=10, pady=10, side=tk.TOP)
 host_chat_display.pack(padx=25, pady=25, side=tk.LEFT, expand=True, fill='both')
+host_scrollbar.pack(pady=25,side=tk.LEFT,fill='y')
 host_logout_button.pack(pady = 20, padx=20, side=tk.TOP)
-#host_disconnect_button.pack(pady = 20, padx=20, side=tk.TOP)
-
-#host_ready_button.pack(pady = 20, padx=20, side=tk.TOP)
-#host_start_button.pack(pady = 20, padx=20, side=tk.TOP)
 GTEST_BUTTON.pack(pady=20, padx=20, side=tk.TOP)
 
 host_message_label.pack(pady=20, padx=20, side=tk.LEFT, anchor='e')
@@ -968,17 +982,19 @@ host_my_message.pack(pady=20, padx=20, side=tk.RIGHT, expand=True, fill='x')
 
 # ! SERVER LIST SCREEN !
 # If there are other users online, display list.
+join_bottom_frame = ttk.Frame(server_list_page)
 join_list_label = ttk.Label(server_list_page, text="List of users online: ", style="M.TLabel")
 join_server_list = tk.Listbox(server_list_page, bg='white',selectmode="single")
-join_join_button = ttk.Button(server_list_page, text="Join", style="S.TButton")
-join_logout_button = ttk.Button(server_list_page, text="Logout", style="S.TButton", command=lambda: logout(GG))
+join_join_button = ttk.Button(join_bottom_frame, text="Join", style="S.TButton")
+join_logout_button = ttk.Button(join_bottom_frame, text="Logout", style="S.TButton", command=lambda: logout(GG))
 join_join_button.configure(command=lambda e=None,g=GG,s=join_server_list: join_host(e,g,s))
 join_server_list.bind("<Double-Button-1>", lambda e,g=GG,s=join_server_list: join_host(e,g,s))
 
-join_list_label.pack(padx=20, pady=20, side=tk.TOP, anchor='nw')
+join_list_label.pack(padx=20, pady=20, side=tk.TOP)
 join_server_list.pack(padx=10, pady=10, side=tk.TOP, fill='x')
-join_join_button.pack(padx=20, pady=20, side=tk.LEFT, anchor='nw')
-join_logout_button.pack(padx=20, pady=20, side=tk.RIGHT, anchor='nw')
+join_join_button.pack(padx=20, pady=20, side=tk.LEFT)
+join_logout_button.pack(padx=20, pady=20, side=tk.RIGHT)
+join_bottom_frame.pack(side=tk.TOP,fill='x')
 
 # ! GAME SCREEN !
 # 4th Test Window : Actual game (testing, iterate)
@@ -1005,17 +1021,19 @@ game_text_frame = ttk.Frame(game_page)
 game_text_frame.pack(side=tk.BOTTOM,fill='x')
 game_text_label = ttk.Label(game_text_frame, text="Destroy the words by typing them! : ", style="M.TLabel")
 game_text_entry = ttk.Entry(game_text_frame, font=('Ariel',15))
+game_text_highlight = game_canvas.create_text(0,0,text="",fill="#00A500",font=("Arial",20),anchor="nw")
 
 game_lives_label.pack(padx=10, pady=20, side=tk.LEFT)
 game_life.pack(padx=10, pady=20, side=tk.LEFT)
 game_score_label.pack(padx=10, pady=20, side=tk.LEFT)
 game_score.pack(padx=10, pady=20, side=tk.LEFT)
-#game_peer_score_label.pack(padx=20, pady=20, side=tk.LEFT)
-#game_peer_score.pack(pady=20, side=tk.LEFT)
+
 game_quit_button.pack(padx=10, pady=20, side=tk.RIGHT)
 game_text_label.pack(padx=10, pady=20, side=tk.LEFT)
 game_text_entry.pack(padx=10, pady=20, side=tk.LEFT,fill='x',expand=True)
 game_canvas.pack(fill='both',expand=True)
+
+game_text_entry.bind("<KeyRelease>", lambda e,g=GG: highlighter(e,g))
 
 # ----------------------------------------------
 #                   MAIN LOOP
