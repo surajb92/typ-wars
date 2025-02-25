@@ -8,6 +8,7 @@ from threading import Event
 import time
 import random
 import datetime
+import pygame
 
 # Small section to get screen dimensions
 rope = tk.Tk()
@@ -260,6 +261,14 @@ class gameState:
         self.textField.bind( "<Return>", lambda e: self.word_entered(e) )
         self.gameLock = threading.Lock()
         self.sendWord = ''
+        pygame.mixer.init()
+        self.music = pygame.mixer.Sound("assets/music.mp3")
+        self.correct_sound = pygame.mixer.Sound("assets/correct.wav")
+        self.wrong_sound = pygame.mixer.Sound("assets/wrong.wav")
+        self.music.set_volume(0.5)
+        self.correct_sound.set_volume(0.5)
+        self.wrong_sound.set_volume(0.5)
+        self.music.play(loops=-1)
     def set_peer(self):
         self.peerScore=0
         game_peer_score_label.pack(padx=20, pady=20, side=tk.LEFT)
@@ -274,6 +283,7 @@ class gameState:
         if word in self.screenWords:
             self.word_DELETE(word)
             self.score_UP(50)
+            self.correct_sound.play()
             # Peer helped you out lol!
         else:
             self.word_INSERT(word,color)
@@ -289,6 +299,7 @@ class gameState:
         game_peer_score.pack_forget()
         if hasattr(self,"peerScore"):
             delattr(self,"peerScore")
+        self.music.stop()
     def word_INSERT(self,word,color="#FFFFFF"):
         with self.gameLock:
             t=self.screen.create_text(self.w_tick,50,text=word,fill=color,font=("Arial",20))
@@ -313,9 +324,16 @@ class gameState:
             s=self.score_UP()
             if s > self.diffScore[self.difficulty] and self.difficulty < 6:   # Raise difficulty when score reaches certain thresholds
                 self.difficulty+=1
+            self.correct_sound.play()
         elif word in self.goodWords:
             # SEND WORD TO ENEMY
-            self.sendWord = word
+            if hasattr(self,"peerScore"):
+                self.sendWord = word
+                self.correct_sound.play()
+            else:
+                self.wrong_sound.play()
+        else:
+            self.wrong_sound.play()
             
     def multi_player_update(self):
         if self.wordCount < 2:
@@ -681,8 +699,8 @@ def singleplayer_game_loop(G,area):
     while G.STATE=="IN_GAME":
         G.GAME.single_player_update()
         if int(LIFE.get()) == 0:
-            warning_popup(root,"Game over!\nFinal Score: "+SCORE.get())
             G.exit_game()
+            warning_popup(root,"Game over!\nFinal Score: "+SCORE.get())
             break
         time.sleep(G.GAME.speed[G.GAME.difficulty])
     if G.STATE=="GAME_QUIT_ME":
@@ -702,8 +720,8 @@ def multiplayer_game_loop(G,area):
         if int(LIFE.get()) == 0:
             G.send_to_peer("__GAMEOVER__")
             G.STATE="LOSE"
-            warning_popup(root,"You LOSE !\nOpponent: "+PEER_SCORE.get()+"\nYou: "+SCORE.get())
             G.exit_game()
+            warning_popup(root,"You LOSE !\nOpponent: "+PEER_SCORE.get()+"\nYou: "+SCORE.get())
             break
         elif G.GAME.sendWord:
             if G.GAME.sendWord=="__SCORE__":
@@ -714,8 +732,8 @@ def multiplayer_game_loop(G,area):
             G.GAME.sendWord=''
         time.sleep(G.GAME.speed[G.GAME.difficulty])
     if G.STATE=="WIN":
-        warning_popup(root,"You WIN !\nOpponent: "+PEER_SCORE.get()+"\nYou: "+SCORE.get())
         G.exit_game()
+        warning_popup(root,"You WIN !\nOpponent: "+PEER_SCORE.get()+"\nYou: "+SCORE.get())
     elif G.STATE=="GAME_QUIT_ME":
         G.STATE="LOGGED_IN"
         G.send_to_peer("__EXIT__")
