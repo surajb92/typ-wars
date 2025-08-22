@@ -1,6 +1,7 @@
 # **Typ-Wars**
 ## A simple SP and LAN MP typing game
 <img src="screenshots.jpg">
+
 ### How to play
 Type the words on spawning on screen to destroy them before they reach the bottom of the screen.  
 Created using tkinter GUI library.  
