@@ -1,5 +1,10 @@
 # **Typ-Wars**
 ## A simple SP and LAN MP typing game
+<img src="screenshots/01.png" width=30% height=30%><img src="screenshots/02.png" width=30% height=30%>
+<img src="screenshots/03.png" width=50% height=50%>
+<img src="screenshots/04.png" width=45% height=45%>
+<img src="screenshots/05.png" width=50% height=30%><img src="screenshots/06.png" width=50% height=30%>
+<img src="screenshots/07.png" width=45% height=45%><img src="screenshots/08.png" width=50% height=50%>
 ### How to play
 Type the words on spawning on screen to destroy them before they reach the bottom of the screen.  
 Created using tkinter GUI library.  
